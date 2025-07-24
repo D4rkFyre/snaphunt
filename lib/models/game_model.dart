@@ -1,0 +1,1 @@
+// TODO: Game data class with host, location, and status info.

@@ -1,0 +1,1 @@
+// TODO: Widget for displaying clue or submission images.

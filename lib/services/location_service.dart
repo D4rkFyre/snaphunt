@@ -1,0 +1,1 @@
+// TODO: Get current location, check geofence boundaries.

@@ -1,0 +1,1 @@
+// TODO: Store static strings used throughout the app.

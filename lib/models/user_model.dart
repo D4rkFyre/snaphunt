@@ -1,0 +1,1 @@
+// TODO: User data class with fields like name, ID, isHost.
