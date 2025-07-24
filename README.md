@@ -1,16 +1,62 @@
-# snaphunt
+# SnapHunt
 
-A new Flutter project.
+SnapHunt is an AI-powered scavenger hunt mobile app built with Flutter.  
+Hosts take photos of locations or objects within a designated play zone, and players must locate and take matching photos. The app uses an AI backend to evaluate similarity and award points.
 
-## Getting Started
+---
 
-This project is a starting point for a Flutter application.
+## 🚧 Project Status
 
-A few resources to get you started if this is your first Flutter project:
+> 🧱 **Current Phase:** Project Scaffold & Setup  
+All directory structure, placeholder files, and Git flow have been initialized.  
+Development will begin on feature branches starting in the next sprint.
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+---
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## 📁 Project Structure
+
+```plaintext
+lib/
+├── main.dart                  # Entry point of the app
+│
+├── screens/                  # Major UI pages
+│   ├── home_screen.dart
+│   ├── host_screen.dart
+│   ├── player_screen.dart
+│   ├── match_result_screen.dart
+│   └── splash_screen.dart
+│
+├── widgets/                  # Reusable UI components
+│   ├── custom_button.dart
+│   ├── photo_card.dart
+│   └── loading_indicator.dart
+│
+├── models/                   # Data models
+│   ├── user_model.dart
+│   ├── game_model.dart
+│   ├── submission_model.dart
+│   └── clue_model.dart
+│
+├── services/                 # Platform services (camera, location, permissions)
+│   ├── location_service.dart
+│   ├── camera_service.dart
+│   ├── permission_service.dart
+│   └── firebase_service.dart
+│
+├── providers/                # State management with Provider
+│   ├── game_provider.dart
+│   ├── user_provider.dart
+│   └── auth_provider.dart
+│
+├── ai_backend/               # Handles AI backend requests
+│   ├── image_matcher.dart
+│   └── api_client.dart
+│
+├── constants/                # App-wide constants and styles
+│   ├── colors.dart
+│   ├── strings.dart
+│   └── app_routes.dart
+│
+└── utils/                    # General-purpose helper functions
+    ├── image_utils.dart
+    └── location_utils.dart
