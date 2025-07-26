@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "524135744410",
+    "project_id": "snaphunt-d99b8",
+    "storage_bucket": "snaphunt-d99b8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:524135744410:android:a2148bfb6a0f9ea00d7023",
+        "android_client_info": {
+          "package_name": "com.teamadr.snaphunt"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBinQuDKqXeLrkUohZV2f0tzW9my1OiHdE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

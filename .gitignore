@@ -46,3 +46,4 @@ app.*.map.json
 
 # Firebase crashlytics
 android/app/src/main/assets/crashlytics-build.properties
+.firebase/
