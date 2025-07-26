@@ -36,11 +36,21 @@ dependencies:
   cupertino_icons: ^1.0.8
   http: ^1.1.0                # For calling FastAPI backend
   provider: ^6.1.2            # For state management (game state, user, etc.)
-  geolocator: ^14.0.2         # For GPS location
+  geolocator: ^10.1.0         # For GPS location
   permission_handler: ^12.0.1 # For camera/location permissions
   camera: ^0.11.2           # For taking pictures
   path_provider: ^2.1.2       # For saving/loading local data (if needed)
   image_picker: ^1.1.1        # Optional: camera/photo access fallback
+
+  # Firebase Core + Firestore + Storage
+  firebase_core: ^2.31.0
+  cloud_firestore: ^4.17.3
+  firebase_storage: ^11.7.1
+
+  # Hive (for local ID / session data)
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  uuid: ^4.1.0                 # to generate unique player IDs
 
 dev_dependencies:
   flutter_test:
