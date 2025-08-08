@@ -17,29 +17,17 @@ import 'package:flutter/foundation.dart'
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
-      throw UnsupportedError(
-        'DefaultFirebaseOptions have not been configured for web - '
-        'you can reconfigure this by running the FlutterFire CLI again.',
-      );
+      return web;
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
         return android;
       case TargetPlatform.iOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for ios - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return ios;
       case TargetPlatform.macOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for macos - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return macos;
       case TargetPlatform.windows:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for windows - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return windows;
       case TargetPlatform.linux:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for linux - '
@@ -59,4 +47,43 @@ class DefaultFirebaseOptions {
     projectId: 'snaphunt-d99b8',
     storageBucket: 'snaphunt-d99b8.firebasestorage.app',
   );
+
+  static const FirebaseOptions web = FirebaseOptions(
+    apiKey: 'AIzaSyCLuFaDiF0mLZigGFPTE_Sxf1CTt-ORUao',
+    appId: '1:524135744410:web:4ac49d0a51d9b7190d7023',
+    messagingSenderId: '524135744410',
+    projectId: 'snaphunt-d99b8',
+    authDomain: 'snaphunt-d99b8.firebaseapp.com',
+    storageBucket: 'snaphunt-d99b8.firebasestorage.app',
+    measurementId: 'G-0V33X5Z0NG',
+  );
+
+  static const FirebaseOptions macos = FirebaseOptions(
+    apiKey: 'AIzaSyBKLQveZ7h10Ree_TlQX7mOoKB9H3CJzpM',
+    appId: '1:524135744410:ios:220c3170fa1d2f930d7023',
+    messagingSenderId: '524135744410',
+    projectId: 'snaphunt-d99b8',
+    storageBucket: 'snaphunt-d99b8.firebasestorage.app',
+    iosBundleId: 'com.example.snaphunt',
+  );
+
+  static const FirebaseOptions ios = FirebaseOptions(
+    apiKey: 'AIzaSyBKLQveZ7h10Ree_TlQX7mOoKB9H3CJzpM',
+    appId: '1:524135744410:ios:220c3170fa1d2f930d7023',
+    messagingSenderId: '524135744410',
+    projectId: 'snaphunt-d99b8',
+    storageBucket: 'snaphunt-d99b8.firebasestorage.app',
+    iosBundleId: 'com.example.snaphunt',
+  );
+
+  static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyCLuFaDiF0mLZigGFPTE_Sxf1CTt-ORUao',
+    appId: '1:524135744410:web:f6f3fa9637d6d6130d7023',
+    messagingSenderId: '524135744410',
+    projectId: 'snaphunt-d99b8',
+    authDomain: 'snaphunt-d99b8.firebaseapp.com',
+    storageBucket: 'snaphunt-d99b8.firebasestorage.app',
+    measurementId: 'G-HYGSF5DBQS',
+  );
+
 }
