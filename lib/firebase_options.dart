@@ -85,5 +85,4 @@ class DefaultFirebaseOptions {
     storageBucket: 'snaphunt-d99b8.firebasestorage.app',
     measurementId: 'G-HYGSF5DBQS',
   );
-
 }

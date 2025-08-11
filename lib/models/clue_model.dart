@@ -1,1 +1,0 @@
-// TODO: Clue data model with original host image and clue ID.
