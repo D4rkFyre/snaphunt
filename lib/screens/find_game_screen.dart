@@ -1,3 +1,4 @@
+import 'lobby_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -75,12 +76,14 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
               ),
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: () {
-                  // TODO: Add your game join logic
-                  print('Finding game with code: ${_gameCodeController.text}');
-                },
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const CreateGameLobbyScreen()),
+                    );
+                  },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.greenAccent[400],
+                  backgroundColor: Colors.greenAccent,
                   foregroundColor: Colors.black,
                   padding: const EdgeInsets.symmetric(
                       vertical: 16, horizontal: 32),

@@ -1,4 +1,5 @@
 import 'find_game_screen.dart';
+import 'host_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -51,7 +52,10 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 12),
             GestureDetector(
               onTap: () {
-                print('Host tapped');
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const HostGameScreen()),
+                );
               },
               child: SvgPicture.asset(
                 'assets/icons/maps.svg',
