@@ -110,3 +110,6 @@ Maintained by the **SnapHunt Development Team (Full Sail University Capstone Pro
 - Leaderboard system
 - Host review mode
 
+## Docs
+- [Project Baseline](docs/PROJECT_BASELINE.md)
+- [Naming & Structure Guide](docs/NAMING_GUIDE.md)

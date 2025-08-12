@@ -1,1 +1,0 @@
-// TODO: Control camera, capture photo, switch lenses.
