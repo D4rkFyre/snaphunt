@@ -1,1 +1,0 @@
-// TODO: Submission data with player photo, match score, timestamp.

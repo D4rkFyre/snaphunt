@@ -1,1 +1,0 @@
-// TODO: Manage current user state and roles.
