@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'firebase_options.dart';
-
-import 'dev/dev_host_screen.dart';
+import 'firebase_options.dart';  // FlutterFire CLI generated Firebase config file
+import 'dev/dev_host_screen.dart';  // Temp dev host screen to test logic
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  runApp(const SnapHuntApp());
+  WidgetsFlutterBinding.ensureInitialized();  // Init Flutter bindings/plugins
+  await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform  // Platform config
+  );
+  runApp(const SnapHuntApp());  // Launch app
 }
 
 class SnapHuntApp extends StatelessWidget {
@@ -16,10 +17,12 @@ class SnapHuntApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'SnapHunt (Dev)',
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
-      // Temporary dev entry: tap + to create a game and see the join code.
-      home: const DevHostScreen(),
+      title: 'SnapHunt (Dev)',  // App title
+      theme: ThemeData(
+          useMaterial3: true,
+          colorSchemeSeed: Colors.teal  // Theme color
+      ),
+      home: const DevHostScreen(), // Temporary dev entry: tap + to create a game and see the join code.
     );
   }
 }

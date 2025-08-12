@@ -1,13 +1,13 @@
 // lib/models/game_model.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// Represents a SnapHunt game document stored in Firestore under `games/{gameId}`.
+/// Game document stored in Firestore under `games/{gameId}`.
 class Game {
   final String id; // Firestore doc id
   final String joinCode; // e.g., "A1B2C3"
   final String status; // "waiting" | "active" | "ended"
   final DateTime createdAt; // when the game was created
-  final List<String> players; // list of player IDs (can evolve later)
+  final List<String> players; // list of player IDs
 
   Game({
     required this.id,
@@ -17,6 +17,7 @@ class Game {
     required this.players,
   });
 
+  // Return a copy with specific fields changed
   Game copyWith({
     String? id,
     String? joinCode,
@@ -33,7 +34,7 @@ class Game {
     );
   }
 
-  /// Convert this Game to a Firestore-friendly map (excluding the document ID).
+  /// Serialize for Firestore (no doc ID)
   Map<String, dynamic> toJson() {
     return {
       'joinCode': joinCode,
@@ -43,7 +44,7 @@ class Game {
     };
   }
 
-  /// Build a Game from a Firestore snapshot.
+  /// Build a Game from a Firestore doc snapshot.
   factory Game.fromSnapshot(DocumentSnapshot<Map<String, dynamic>> snap) {
     final d = snap.data()!;
     return Game(
@@ -55,7 +56,7 @@ class Game {
     );
   }
 
-  /// Convenience for testing or manual construction from a map.
+  /// Construct from a map if game ID is known
   factory Game.fromMap(String id, Map<String, dynamic> d) {
     return Game(
       id: id,
