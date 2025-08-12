@@ -62,7 +62,9 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
                   filled: true,
                   fillColor: const Color(0xFF5D4BB2),
                   contentPadding: const EdgeInsets.symmetric(
-                      vertical: 18.0, horizontal: 20.0),
+                    vertical: 18.0,
+                    horizontal: 20.0,
+                  ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(40),
                     borderSide: BorderSide.none,
@@ -70,23 +72,29 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(40),
                     borderSide: const BorderSide(
-                        color: Colors.white, width: 1.5),
+                      color: Colors.white,
+                      width: 1.5,
+                    ),
                   ),
                 ),
               ),
               const SizedBox(height: 24),
               ElevatedButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => const CreateGameLobbyScreen()),
-                    );
-                  },
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const CreateGameLobbyScreen(),
+                    ),
+                  );
+                },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.greenAccent,
                   foregroundColor: Colors.black,
                   padding: const EdgeInsets.symmetric(
-                      vertical: 16, horizontal: 32),
+                    vertical: 16,
+                    horizontal: 32,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(30),
                   ),

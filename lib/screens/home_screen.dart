@@ -54,7 +54,9 @@ class _HomeScreenState extends State<HomeScreen> {
               onTap: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const HostGameScreen()),
+                  MaterialPageRoute(
+                    builder: (context) => const HostGameScreen(),
+                  ),
                 );
               },
               child: SvgPicture.asset(
@@ -77,7 +79,9 @@ class _HomeScreenState extends State<HomeScreen> {
               onTap: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const JoinGameScreen()),
+                  MaterialPageRoute(
+                    builder: (context) => const JoinGameScreen(),
+                  ),
                 );
               },
               child: SvgPicture.asset(
@@ -86,11 +90,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 height: 160,
               ),
             ),
-
           ],
         ),
       ),
-
 
       bottomNavigationBar: BottomNavigationBar(
         backgroundColor: const Color(0xFFFFC943),

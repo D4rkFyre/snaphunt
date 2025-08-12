@@ -39,12 +39,14 @@ class _HostGameScreenState extends State<HostGameScreen> {
       ),
       body: Center(
         child: ElevatedButton(
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const CreateGameLobbyScreen()),
-              );
-            },
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const CreateGameLobbyScreen(),
+              ),
+            );
+          },
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.greenAccent, // bright green
             foregroundColor: Colors.black, // text color
