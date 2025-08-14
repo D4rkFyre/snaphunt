@@ -1,4 +1,4 @@
-// TODO: UI where host sets up a new game and uploads clue images.
+
 import 'lobby_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -13,17 +13,19 @@ class HostGameScreen extends StatefulWidget {
 class _HostGameScreenState extends State<HostGameScreen> {
   int _selectedIndex = 0;
 
+
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
-      // Here you can add navigation logic based on index
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+
       backgroundColor: const Color(0xFF3E2C8B), // same background
+
       appBar: AppBar(
         title: const Text(
           "Host Game",
@@ -38,6 +40,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
         elevation: 0,
       ),
       body: Center(
+
         child: ElevatedButton(
           onPressed: () {
             Navigator.push(
@@ -60,6 +63,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
             ),
           ),
           child: const Text("Create Game"),
+
         ),
       ),
       bottomNavigationBar: BottomNavigationBar(

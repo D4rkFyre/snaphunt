@@ -11,12 +11,13 @@ class JoinGameScreen extends StatefulWidget {
 
 class _JoinGameScreenState extends State<JoinGameScreen> {
   int _selectedIndex = 0;
+
   final TextEditingController _gameCodeController = TextEditingController();
 
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
-      // TODO: Add navigation logic if needed
+
     });
   }
 
