@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
+import 'screens/home_screen.dart';
 
 import 'dev/dev_host_screen.dart';
 
@@ -19,7 +20,7 @@ class SnapHuntApp extends StatelessWidget {
       title: 'SnapHunt (Dev)',
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
       // Temporary dev entry: tap + to create a game and see the join code.
-      home: const DevHostScreen(),
+      home: const HomeScreen(),
     );
   }
 }
