@@ -1,7 +1,7 @@
 // lib/services/join_code.dart
 import 'dart:math';
 
-/// Generates short, human-friendly join codes for SnapHunt.
+/// Generates short, human-friendly join codes
 /// Default: 6 characters, uppercase, excluding visually ambiguous chars.
 class JoinCode {
   // Excludes: I, O, 1, 0

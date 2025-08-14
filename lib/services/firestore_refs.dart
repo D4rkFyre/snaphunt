@@ -3,7 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// Centralized Firestore collection/document references.
 class FirestoreRefs {
-  FirestoreRefs._(); // no instances
+  FirestoreRefs._(); // no instances (library-private)
 
   /// Top-level collection for games: `/games`
   static CollectionReference<Map<String, dynamic>> games(

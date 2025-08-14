@@ -4,31 +4,36 @@ import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/models/game_model.dart';
 
 /// Minimal dev-only screen: tap the FAB to create a game with a unique join code.
-/// Safe to delete once real UI is ready.
+/// Will be removed once real UI is ready.
 class DevHostScreen extends StatefulWidget {
   const DevHostScreen({super.key, GameRepository? repo}) : _repo = repo;
 
-  final GameRepository? _repo;
+  final GameRepository? _repo;  // Optional repo for testing
 
   @override
   State<DevHostScreen> createState() => _DevHostScreenState();
 }
 
 class _DevHostScreenState extends State<DevHostScreen> {
+  // Game repo instance (uses provided repo or the default one)
   late final GameRepository _repo = widget._repo ?? GameRepository();
+  // Local states for game status/errors
   bool _busy = false;
   Game? _lastGame;
   String? _error;
 
+  // Create a game and update the UI with results or errors
   Future<void> _createGame() async {
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
+      // Call repo to create game
       final game = await _repo.createGame();
       setState(() => _lastGame = game);
 
+      // Show confirmation as a snackbar
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -39,6 +44,7 @@ class _DevHostScreenState extends State<DevHostScreen> {
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
+      // Reset busy flag if widget is still mounted
       if (mounted) setState(() => _busy = false);
     }
   }
@@ -74,7 +80,7 @@ class _DevHostScreenState extends State<DevHostScreen> {
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _busy ? null : _createGame,
+        onPressed: _busy ? null : _createGame,  // Disabled while busy
         child: const Icon(Icons.add),
       ),
     );
