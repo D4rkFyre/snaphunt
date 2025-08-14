@@ -11,12 +11,13 @@ class JoinGameScreen extends StatefulWidget {
 
 class _JoinGameScreenState extends State<JoinGameScreen> {
   int _selectedIndex = 0;
-  final TextEditingController _usernameController = TextEditingController();
+
   final TextEditingController _gameCodeController = TextEditingController();
 
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
+
     });
   }
 
@@ -43,42 +44,6 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                'Username',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _usernameController,
-                style: const TextStyle(color: Colors.white),
-                textAlign: TextAlign.center,
-                decoration: InputDecoration(
-                  hintText: 'Enter your username',
-                  hintStyle: const TextStyle(color: Colors.white54),
-                  filled: true,
-                  fillColor: const Color(0xFF5D4BB2),
-                  contentPadding: const EdgeInsets.symmetric(
-                    vertical: 18.0,
-                    horizontal: 20.0,
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(40),
-                    borderSide: BorderSide.none,
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(40),
-                    borderSide: const BorderSide(
-                      color: Colors.white,
-                      width: 1.5,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
               const Text(
                 'Game Code',
                 style: TextStyle(
@@ -117,16 +82,6 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
               const SizedBox(height: 24),
               ElevatedButton(
                 onPressed: () {
-                  final username = _usernameController.text.trim();
-                  final gameCode = _gameCodeController.text.trim();
-                  if (username.isEmpty || gameCode.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content:
-                          Text("Please enter both username and game code")),
-                    );
-                    return;
-                  }
                   Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -188,4 +143,3 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
     );
   }
 }
-

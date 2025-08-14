@@ -1,3 +1,4 @@
+
 import 'lobby_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -11,19 +12,20 @@ class HostGameScreen extends StatefulWidget {
 
 class _HostGameScreenState extends State<HostGameScreen> {
   int _selectedIndex = 0;
-  final TextEditingController _usernameController = TextEditingController();
+
 
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
-      // Add navigation logic based on index if needed
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF3E2C8B),
+
+      backgroundColor: const Color(0xFF3E2C8B), // same background
+
       appBar: AppBar(
         title: const Text(
           "Host Game",
@@ -38,81 +40,30 @@ class _HostGameScreenState extends State<HostGameScreen> {
         elevation: 0,
       ),
       body: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Username',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                ),
+
+        child: ElevatedButton(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const CreateGameLobbyScreen(),
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _usernameController,
-                style: const TextStyle(color: Colors.white),
-                textAlign: TextAlign.center,
-                decoration: InputDecoration(
-                  hintText: 'Enter your username',
-                  hintStyle: const TextStyle(color: Colors.white54),
-                  filled: true,
-                  fillColor: const Color(0xFF5D4BB2),
-                  contentPadding: const EdgeInsets.symmetric(
-                    vertical: 18.0,
-                    horizontal: 20.0,
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(40),
-                    borderSide: BorderSide.none,
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(40),
-                    borderSide: const BorderSide(
-                      color: Colors.white,
-                      width: 1.5,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: () {
-                  final username = _usernameController.text.trim();
-                  if (username.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("Please enter a username")),
-                    );
-                    return;
-                  }
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const CreateGameLobbyScreen(),
-                    ),
-                  );
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.greenAccent,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 16,
-                    horizontal: 32,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                ),
-                child: const Text(
-                  'Create Game',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
+            );
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.greenAccent, // bright green
+            foregroundColor: Colors.black, // text color
+            padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(30), // rounded edges
+            ),
+            textStyle: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+            ),
           ),
+          child: const Text("Create Game"),
+
         ),
       ),
       bottomNavigationBar: BottomNavigationBar(
