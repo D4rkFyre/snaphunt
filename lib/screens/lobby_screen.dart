@@ -11,11 +11,13 @@ class CreateGameLobbyScreen extends StatelessWidget {
     super.key,
     required this.gameId,
     required this.joinCode,
-    this.db, // optional injection for tests
+    required this.isHost, // <— controls Start Game visibility
+    this.db,              // optional injection for tests
   });
 
-  final String gameId;
-  final String joinCode;
+  final String gameId;     // /games/{gameId}
+  final String joinCode;   // e.g., A1B2C3
+  final bool isHost;
   final FirebaseFirestore? db;
 
   FirebaseFirestore get _db => db ?? FirebaseFirestore.instance;
@@ -161,29 +163,30 @@ class CreateGameLobbyScreen extends StatelessWidget {
 
                 const SizedBox(height: 20),
 
-                // Start Game button
-                ElevatedButton(
-                  onPressed: status == 'waiting'
-                      ? () async {
-                    try {
-                      await gameDoc.update({'status': 'active'});
-                      // TODO: navigate to first in-game screen
-                    } catch (e) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Failed to start game: $e')),
-                      );
+                // Start Game: host only, and only while waiting
+                if (isHost)
+                  ElevatedButton(
+                    onPressed: status == 'waiting'
+                        ? () async {
+                      try {
+                        await gameDoc.update({'status': 'active'});
+                        // TODO: Navigate to the first in-game screen
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Failed to start game: $e')),
+                        );
+                      }
                     }
-                  }
-                      : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.greenAccent,
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                    textStyle: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                        : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.greenAccent,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                      textStyle: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                    ),
+                    child: const Text("Start Game"),
                   ),
-                  child: const Text("Start Game"),
-                ),
               ],
             );
           },

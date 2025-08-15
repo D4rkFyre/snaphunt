@@ -13,30 +13,29 @@ class _MockGameRepository extends Mock implements GameRepository {}
 
 void main() {
   testWidgets('Create Game calls repo and navigates to Lobby with args', (tester) async {
-    // Use a fake Firestore so we don't need Firebase.initializeApp()
     final fakeDb = FakeFirebaseFirestore();
 
-    // Seed the game doc the Lobby will stream from (ID must match mocked Game.id)
+    // Seed the game doc the Lobby will stream
     await fakeDb.collection('games').doc('g_123').set({
       'joinCode': 'ZK7M3Q',
       'status': 'waiting',
       'createdAt': DateTime.now(),
-      'players': <String>[],
+      'players': <String>['Host'], // since we now seed hostName
     });
 
-    // Mock the repository to return that same game id/code
     final mockRepo = _MockGameRepository();
     final fakeGame = Game(
       id: 'g_123',
       joinCode: 'ZK7M3Q',
       status: 'waiting',
       createdAt: DateTime(2025, 1, 1),
-      players: const [],
+      players: const ['Host'],
     );
-    // Mocktail: Answer must accept an argument
-    when(() => mockRepo.createGame()).thenAnswer((_) async => fakeGame);
 
-    // Pump Host screen with injected repo and db (so Lobby uses the same fakeDb)
+    // IMPORTANT: match the named argument
+    when(() => mockRepo.createGame(hostName: any(named: 'hostName')))
+        .thenAnswer((_) async => fakeGame);
+
     await tester.pumpWidget(
       MaterialApp(
         home: HostGameScreen(repo: mockRepo, db: fakeDb),
@@ -44,16 +43,13 @@ void main() {
     );
 
     // Tap "Create Game"
-    final createButton = find.text('Create Game');
-    expect(createButton, findsOneWidget);
-    await tester.tap(createButton);
-
-    // Let async + navigation + first stream frame complete
+    await tester.tap(find.text('Create Game'));
     await tester.pump();            // start async
-    await tester.pumpAndSettle();   // finish nav & stream build
+    await tester.pumpAndSettle();   // finish nav + stream
 
-    // Repo called once
-    verify(() => mockRepo.createGame()).called(1);
+    // Verify the repo was called with a hostName (you can match exact if you want)
+    verify(() => mockRepo.createGame(hostName: any(named: 'hostName'))).called(1);
+    // or: verify(() => mockRepo.createGame(hostName: 'Host')).called(1);
 
     // Landed in Lobby and the join code is visible
     expect(find.byType(CreateGameLobbyScreen), findsOneWidget);

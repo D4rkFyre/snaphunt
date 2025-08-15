@@ -24,7 +24,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: JoinGameScreen(db: fake)));
 
     // Enter code lowercased to verify it uppercases/validates
-    await tester.enterText(find.byType(TextField), 'start1');
+    await tester.enterText(find.byType(TextField).at(1), 'start1');
     await tester.tap(find.text('Find a Game'));
     await tester.pumpAndSettle();
 

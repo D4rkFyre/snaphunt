@@ -19,7 +19,9 @@ class JoinGameScreen extends StatefulWidget {
 
 class _JoinGameScreenState extends State<JoinGameScreen> {
   int _selectedIndex = 0;
+
   final TextEditingController _gameCodeController = TextEditingController();
+  final TextEditingController _nameController = TextEditingController();
 
   late final FirebaseFirestore _db = widget.db ?? FirebaseFirestore.instance;
   bool _busy = false;
@@ -28,19 +30,25 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
   @override
   void dispose() {
     _gameCodeController.dispose();
+    _nameController.dispose();
     super.dispose();
   }
 
   void _onItemTapped(int index) => setState(() => _selectedIndex = index);
 
   Future<void> _join() async {
-    final raw = _gameCodeController.text.trim();
-    final code = raw.toUpperCase();
+    final rawCode = _gameCodeController.text.trim();
+    final code = rawCode.toUpperCase();
 
     if (!JoinCode.isValid(code)) {
       setState(() => _error = 'Enter a valid 6-character code (A–Z, 2–9).');
       return;
     }
+
+    final rawName = _nameController.text.trim();
+    final playerName = rawName.isEmpty
+        ? 'Player ${DateTime.now().millisecondsSinceEpoch % 10000}'
+        : rawName;
 
     setState(() {
       _busy = true;
@@ -48,7 +56,7 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
     });
 
     try {
-      // 1) Resolve code -> gameId
+      // Resolve code -> gameId
       final codeSnap = await FirestoreRefs.codeDoc(_db, code).get();
       if (!codeSnap.exists) {
         throw StateError('No game found.');
@@ -59,32 +67,31 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
         throw StateError('No game found.');
       }
 
-      // 2) Fetch game doc and enforce status == 'waiting'
+      // Ensure game exists and waiting
       final gameRef = FirestoreRefs.gameDoc(_db, gameId);
       final gameSnap = await gameRef.get();
       if (!gameSnap.exists) {
         throw StateError('No game found.');
       }
-      final gameData = gameSnap.data()!;
-      final status = (gameData['status'] as String?) ?? 'waiting';
+      final status = (gameSnap.data()!['status'] as String?) ?? 'waiting';
       if (status != 'waiting') {
         throw StateError('Game already started.');
       }
 
-      // 3) Add placeholder player (use a tiny suffix to avoid duplicates)
-      final playerName = 'Player ${DateTime.now().millisecondsSinceEpoch % 10000}';
+      // Add this player nickname
       await gameRef.update({
         'players': FieldValue.arrayUnion([playerName]),
       });
 
       if (!mounted) return;
 
-      // 4) Navigate to lobby with real context
+      // Navigate to lobby
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => CreateGameLobbyScreen(
             gameId: gameId,
             joinCode: code,
+            isHost: false,  // player view → no Start Game button
             db: _db,
           ),
         ),
@@ -121,6 +128,35 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Nickname input
+              const Text(
+                'Your Nickname',
+                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _nameController,
+                style: const TextStyle(color: Colors.white),
+                textAlign: TextAlign.center,
+                decoration: InputDecoration(
+                  hintText: 'Enter nickname (e.g., PlayerTwo)',
+                  hintStyle: const TextStyle(color: Colors.white54),
+                  filled: true,
+                  fillColor: const Color(0xFF5D4BB2),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 14.0, horizontal: 20.0),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(40),
+                    borderSide: BorderSide.none,
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(40),
+                    borderSide: const BorderSide(color: Colors.white, width: 1.5),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
               const Text(
                 'Game Code',
                 style: TextStyle(
@@ -129,7 +165,7 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
               TextField(
                 controller: _gameCodeController,
                 style: const TextStyle(color: Colors.white),
@@ -140,23 +176,18 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
                   hintStyle: const TextStyle(color: Colors.white54),
                   filled: true,
                   fillColor: const Color(0xFF5D4BB2),
-                  contentPadding: const EdgeInsets.symmetric(
-                    vertical: 18.0,
-                    horizontal: 20.0,
-                  ),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 18.0, horizontal: 20.0),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(40),
                     borderSide: BorderSide.none,
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(40),
-                    borderSide: const BorderSide(
-                      color: Colors.white,
-                      width: 1.5,
-                    ),
+                    borderSide: const BorderSide(color: Colors.white, width: 1.5),
                   ),
                 ),
               ),
+
               const SizedBox(height: 12),
               if (_error != null)
                 Padding(
@@ -173,18 +204,14 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
                   child: CircularProgressIndicator(),
                 ),
               const SizedBox(height: 12),
+
               ElevatedButton(
                 onPressed: _busy ? null : _join,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.greenAccent,
                   foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 16,
-                    horizontal: 32,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30),
-                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 32),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                 ),
                 child: const Text(
                   'Find a Game',
@@ -201,27 +228,15 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
         onTap: _onItemTapped,
         items: [
           BottomNavigationBarItem(
-            icon: SvgPicture.asset(
-              'assets/icons/book.svg',
-              color: const Color(0xFF3E2C8B),
-              width: 28,
-            ),
+            icon: SvgPicture.asset('assets/icons/book.svg', color: const Color(0xFF3E2C8B), width: 28),
             label: '',
           ),
           BottomNavigationBarItem(
-            icon: SvgPicture.asset(
-              'assets/icons/trophy-fill.svg',
-              color: const Color(0xFF3E2C8B),
-              width: 28,
-            ),
+            icon: SvgPicture.asset('assets/icons/trophy-fill.svg', color: const Color(0xFF3E2C8B), width: 28),
             label: '',
           ),
           BottomNavigationBarItem(
-            icon: SvgPicture.asset(
-              'assets/icons/person-circle.svg',
-              color: const Color(0xFF3E2C8B),
-              width: 28,
-            ),
+            icon: SvgPicture.asset('assets/icons/person-circle.svg', color: const Color(0xFF3E2C8B), width: 28),
             label: '',
           ),
         ],

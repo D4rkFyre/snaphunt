@@ -7,30 +7,21 @@ import 'package:snaphunt/services/join_code.dart';
 /// Handles game creation and code uniqueness using Firestore transactions.
 class GameRepository {
   final FirebaseFirestore db;
-
-  /// If no Firestore instance is passed, default to live Firestore instance
   GameRepository({FirebaseFirestore? firestore})
-    : db = firestore ?? FirebaseFirestore.instance;
+      : db = firestore ?? FirebaseFirestore.instance;
 
   /// Creates a new game with a unique join code.
-  /// - Reserves code at /codes/{code} (doc id = code)
-  /// - Creates the game at /games/{autoId}
-  /// Returns the created Game.
-  Future<Game> createGame() async {
-    const maxAttempts = 10;  // Avoid infinite loops
-
+  /// If [hostName] is provided, seeds the players array with the host.
+  Future<Game> createGame({String? hostName}) async {
+    const maxAttempts = 10;
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      // random 6-character join code
       final code = JoinCode.generate();
-
       try {
-        // Firestore transaction start (atomic)
         final game = await db.runTransaction<Game>((tx) async {
-          // 1) Pick a code and check if reserved
+          // 1) Reserve code if free
           final codeRef = FirestoreRefs.codeDoc(db, code);
           final codeSnap = await tx.get(codeRef);
           if (codeSnap.exists) {
-            // collision → retry
             throw FirebaseException(
               plugin: 'cloud_firestore',
               code: 'already-exists',
@@ -38,50 +29,43 @@ class GameRepository {
             );
           }
 
-          // 2) Create the game doc FIRST to get its id
+          // 2) Create game doc (to get id)
           final gamesCol = FirestoreRefs.games(db);
-          final newGameRef = gamesCol.doc(); // auto-id
+          final newGameRef = gamesCol.doc();
 
-          // 3) Reserve the code and link it to the game
+          // 3) Link code -> game
           tx.set(codeRef, {
             'status': 'reserved',
-            'gameId': newGameRef.id,                 // <— add this
+            'gameId': newGameRef.id,
             'createdAt': FieldValue.serverTimestamp(),
           });
 
-          // 4) Create the game
+          // 4) Create game (seed host if provided)
           tx.set(newGameRef, {
             'joinCode': code,
             'status': 'waiting',
             'createdAt': FieldValue.serverTimestamp(),
-            'players': <String>[],
+            'players': hostName == null ? <String>[] : <String>[hostName],
           });
 
-          // 5) Return local model (createdAt is local; Firestore has server time)
+          // 5) Return local model
           return Game(
             id: newGameRef.id,
             joinCode: code,
             status: 'waiting',
             createdAt: DateTime.now(),
-            players: const [],
+            players: hostName == null ? const [] : [hostName],
           );
         });
-
-
-        return game; // success
+        return game;
       } on FirebaseException catch (e) {
-        // Retry if game code exists (until retry limit)
         if (e.code == 'already-exists') {
           if (attempt == maxAttempts) rethrow;
-          continue; // try a new code
+          continue;
         }
         rethrow;
       }
     }
-
-    // EVERYTHING HAS FAILED IF WE ARE HERE.
-    throw StateError(
-      'Failed to create a unique join code after $maxAttempts attempts.',
-    );
+    throw StateError('Failed to create a unique join code after $maxAttempts attempts.');
   }
 }

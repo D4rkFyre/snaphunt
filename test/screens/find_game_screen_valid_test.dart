@@ -22,7 +22,7 @@ void main() {
     });
 
     await tester.pumpWidget(MaterialApp(home: JoinGameScreen(db: fake)));
-    await tester.enterText(find.byType(TextField), 'abcd23');
+    await tester.enterText(find.byType(TextField).at(1), 'abcd23'); // code box
     await tester.tap(find.text('Find a Game'));
     await tester.pumpAndSettle();
 
