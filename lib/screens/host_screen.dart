@@ -7,6 +7,29 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/models/game_model.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
 
+/// ---------------------------------------------------------------------------
+/// HostGameScreen
+/// ---------------------------------------------------------------------------
+/// Purpose
+/// - Let a user act as the **host**: enter a nickname, create a game,
+///   and jump to the lobby showing a join code.
+///
+/// What this screen does (end-to-end)
+/// 1) Collects a host nickname (defaults to "Host" if empty)
+/// 2) Calls `GameRepository.createGame(hostName: ...)`
+///    - Internally generates a unique join code
+///    - Atomically creates:
+///        /codes/{CODE}  → { status: "reserved", gameId, createdAt }
+///        /games/{gameId}→ { joinCode: CODE, status: "waiting", players: [hostName] }
+/// 3) Navigates to the **Lobby** with:
+///    - `gameId` (for live stream of the doc)
+///    - `joinCode` (display & copy)
+///    - `isHost: true` (enables the Start Game button)
+///
+/// Notes
+/// - This widget supports **dependency injection** (DI) for tests via optional
+///   `repo` and `db` params. In production, it falls back to real Firebase.
+/// ---------------------------------------------------------------------------
 class HostGameScreen extends StatefulWidget {
   const HostGameScreen({
     super.key,
@@ -15,7 +38,7 @@ class HostGameScreen extends StatefulWidget {
   })  : _repo = repo,
         _db = db;
 
-  /// Optional DI for tests
+  /// Optional DI for tests: if provided, the state will use these.
   final GameRepository? _repo;
   final FirebaseFirestore? _db;
 
@@ -24,25 +47,40 @@ class HostGameScreen extends StatefulWidget {
 }
 
 class _HostGameScreenState extends State<HostGameScreen> {
+  // Bottom nav index (purely UI; doesn’t affect hosting flow)
   int _selectedIndex = 0;
 
+  // Simple UI state for button/spinner/error
   bool _busy = false;
   String? _error;
 
+  // Text field controller for the host’s nickname
   final _nameCtrl = TextEditingController();
 
+  // Firestore instance used by this screen (real in app, fake in tests)
   late final FirebaseFirestore _db =
       widget._db ?? FirebaseFirestore.instance;
 
+  // Repository wrapping all “create game” logic/transaction
   late final GameRepository _repo =
       widget._repo ?? GameRepository(firestore: _db);
 
   @override
   void dispose() {
+    // Always dispose controllers to avoid memory leaks
     _nameCtrl.dispose();
     super.dispose();
   }
 
+  /// Create a new game and navigate to the lobby.
+  ///
+  /// UX:
+  /// - Disables the button while running (spinner)
+  /// - Shows any error message below the field
+  ///
+  /// Data side:
+  /// - Seeds the host nickname into `/games/{gameId}.players` if provided
+  /// - Returns a `Game` model with `id` and `joinCode` we use for navigation
   Future<void> _createGame() async {
     final raw = _nameCtrl.text.trim();
     final hostName = raw.isEmpty ? 'Host' : raw;
@@ -51,32 +89,42 @@ class _HostGameScreenState extends State<HostGameScreen> {
       _busy = true;
       _error = null;
     });
+
     try {
+      // Ask the repository to do the atomic code+game creation.
       final Game game = await _repo.createGame(hostName: hostName);
+
+      // If the user navigated away mid-call, don’t try to push a new route.
       if (!mounted) return;
+
+      // Navigate to the Lobby with host controls enabled.
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => CreateGameLobbyScreen(
-            gameId: game.id,
-            joinCode: game.joinCode,
-            isHost: true,     // host-only controls (Start Game) enabled
-            db: _db,          // pass same db for tests
+            gameId: game.id,         // `/games/{gameId}` document id
+            joinCode: game.joinCode, // displays in the yellow pill
+            isHost: true,            // host-only Start Game button
+            db: _db,                 // pass same db for tests / consistency
           ),
         ),
       );
     } catch (e) {
+      // Surface any errors to the user (e.g., Firestore/network issues)
       setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
+  // Bottom nav tap handler (UI only)
   void _onItemTapped(int index) => setState(() => _selectedIndex = index);
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // App-wide purple background for visual consistency
       backgroundColor: const Color(0xFF3E2C8B),
+
       appBar: AppBar(
         title: const Text(
           "Host Game",
@@ -90,13 +138,15 @@ class _HostGameScreenState extends State<HostGameScreen> {
         centerTitle: true,
         elevation: 0,
       ),
+
+      // Centered column: nickname input → spinner/error → Create Game button
       body: Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Host nickname input
+              // 1) Host nickname input (used to seed the lobby)
               const Text(
                 'Your Nickname',
                 style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
@@ -124,6 +174,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
               ),
               const SizedBox(height: 16),
 
+              // 2) Error message (if any) and progress spinner
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
@@ -139,6 +190,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
                   child: CircularProgressIndicator(),
                 ),
 
+              // 3) Create Game call-to-action (disabled while busy)
               ElevatedButton(
                 onPressed: _busy ? null : _createGame,
                 style: ElevatedButton.styleFrom(
@@ -154,6 +206,9 @@ class _HostGameScreenState extends State<HostGameScreen> {
           ),
         ),
       ),
+
+      // Decorative bottom nav (Host/Join/Profile icons)
+      // Note: this sample doesn’t navigate tabs here; HomeScreen manages tabs.
       bottomNavigationBar: BottomNavigationBar(
         backgroundColor: const Color(0xFFFFC943),
         currentIndex: _selectedIndex,

@@ -1,13 +1,31 @@
 // lib/models/game_model.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// Game document stored in Firestore under `games/{gameId}`.
+/// ---------------------------------------------------------------------------
+/// Game (data model)
+/// ---------------------------------------------------------------------------
+/// Purpose
+/// - In-memory representation of a Firestore document at `/games/{gameId}`.
+/// - Keeps types consistent and conversions (to/from Firestore) in one place.
+///
+/// Fields (current milestone)
+/// - `id`        : Firestore document id (auto-generated on create)
+/// - `joinCode`  : 6-char human code (e.g., "ABCD23")
+/// - `status`    : "waiting" | "active" | "ended"
+/// - `createdAt` : When the game was created (DateTime in app)
+/// - `players`   : List of **nicknames** currently in the lobby
+///
+/// Notes
+/// - Firestore stores `createdAt` as a `Timestamp`. We convert to/from `DateTime`.
+/// - Today `players` is a simple list of strings (nicknames). In the future,
+///   we can upgrade this to richer player objects (uid + name) or a subcollection.
+/// ---------------------------------------------------------------------------
 class Game {
-  final String id; // Firestore doc id
-  final String joinCode; // e.g., "A1B2C3"
-  final String status; // "waiting" | "active" | "ended"
-  final DateTime createdAt; // when the game was created
-  final List<String> players; // list of player IDs
+  final String id;            // Firestore doc id
+  final String joinCode;      // e.g., "ABCD23"
+  final String status;        // "waiting" | "active" | "ended"
+  final DateTime createdAt;   // when the game was created
+  final List<String> players; // lobby display names (nicknames)
 
   Game({
     required this.id,
@@ -17,7 +35,7 @@ class Game {
     required this.players,
   });
 
-  // Return a copy with specific fields changed
+  /// Return a new Game with any subset of fields changed.
   Game copyWith({
     String? id,
     String? joinCode,
@@ -34,7 +52,12 @@ class Game {
     );
   }
 
-  /// Serialize for Firestore (no doc ID)
+  /// Convert this model into a plain map for Firestore **writes**.
+  ///
+  /// Important:
+  /// - When creating a game, we usually let Firestore set `createdAt`
+  ///   with `FieldValue.serverTimestamp()` inside the repository/transaction.
+  ///   This `toJson()` is handy for updates or non-transactional writes.
   Map<String, dynamic> toJson() {
     return {
       'joinCode': joinCode,
@@ -44,7 +67,11 @@ class Game {
     };
   }
 
-  /// Build a Game from a Firestore doc snapshot.
+  /// Build a `Game` from a typed Firestore snapshot at `/games/{gameId}`.
+  ///
+  /// Assumes the document exists and has all expected fields.
+  /// If you need extra safety (e.g., missing fields early in lifecycle),
+  /// add null-checks/defaults here.
   factory Game.fromSnapshot(DocumentSnapshot<Map<String, dynamic>> snap) {
     final d = snap.data()!;
     return Game(
@@ -56,7 +83,8 @@ class Game {
     );
   }
 
-  /// Construct from a map if game ID is known
+  /// Construct from a `{...}` map when we already know the `id`.
+  /// Useful with manual queries or when using `withConverter` in a custom way.
   factory Game.fromMap(String id, Map<String, dynamic> d) {
     return Game(
       id: id,
