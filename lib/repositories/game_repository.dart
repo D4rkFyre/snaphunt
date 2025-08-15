@@ -26,11 +26,11 @@ class GameRepository {
       try {
         // Firestore transaction start (atomic)
         final game = await db.runTransaction<Game>((tx) async {
-          // 1) Check if code is already reserved.
+          // 1) Pick a code and check if reserved
           final codeRef = FirestoreRefs.codeDoc(db, code);
           final codeSnap = await tx.get(codeRef);
           if (codeSnap.exists) {
-            // collision → retry with a new code
+            // collision → retry
             throw FirebaseException(
               plugin: 'cloud_firestore',
               code: 'already-exists',
@@ -38,31 +38,35 @@ class GameRepository {
             );
           }
 
-          // 2) Reserve the code.
-          tx.set(codeRef, {
-            'status': 'reserved',   // Lock game code
-            'createdAt': FieldValue.serverTimestamp(),  // Server generated time of creation
-          });
-
-          // 3) Create the game in the same transaction (atomic).
+          // 2) Create the game doc FIRST to get its id
           final gamesCol = FirestoreRefs.games(db);
-          final newGameRef = gamesCol.doc(); // auto-id (Firestore created)
-          tx.set(newGameRef, {
-            'joinCode': code,  // Connect game to its code
-            'status': 'waiting',  // Game status (waiting to start)
+          final newGameRef = gamesCol.doc(); // auto-id
+
+          // 3) Reserve the code and link it to the game
+          tx.set(codeRef, {
+            'status': 'reserved',
+            'gameId': newGameRef.id,                 // <— add this
             'createdAt': FieldValue.serverTimestamp(),
-            'players': <String>[],  // Player list will populate as players join
           });
 
-          // Game model
+          // 4) Create the game
+          tx.set(newGameRef, {
+            'joinCode': code,
+            'status': 'waiting',
+            'createdAt': FieldValue.serverTimestamp(),
+            'players': <String>[],
+          });
+
+          // 5) Return local model (createdAt is local; Firestore has server time)
           return Game(
             id: newGameRef.id,
             joinCode: code,
             status: 'waiting',
-            createdAt: DateTime.now(), // local time (Firebase server time)
+            createdAt: DateTime.now(),
             players: const [],
           );
         });
+
 
         return game; // success
       } on FirebaseException catch (e) {
