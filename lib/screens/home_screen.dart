@@ -1,8 +1,27 @@
+// lib/screens/home_screen.dart
 import 'find_game_screen.dart';
 import 'host_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+/// ---------------------------------------------------------------------------
+/// HomeScreen
+/// ---------------------------------------------------------------------------
+/// Purpose
+/// - Simple **landing hub**: choose to Host a game or Join a game.
+///
+/// What this screen does
+/// - Shows two big tappable icons:
+///   - **Host** → navigates to `HostGameScreen`
+///   - **Join** → navigates to `JoinGameScreen`
+/// - Includes a decorative bottom navigation bar (icons only).
+///
+/// Notes
+/// - `_selectedIndex` currently just updates the highlighted icon in the bottom
+///   nav; it does not swap the main content here (navigation is via the icons).
+/// - If you later want true tabs, you can render different bodies based on
+///   `_selectedIndex` instead of pushing new routes.
+/// ---------------------------------------------------------------------------
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -11,18 +30,21 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  // Index for the decorative bottom nav
   int _selectedIndex = 0;
 
   void _onItemTapped(int index) {
     setState(() {
-      _selectedIndex = index;
+      _selectedIndex = index;  // visual only in this screen
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF3E2C8B), // App background color
+      // Brand background color
+      backgroundColor: const Color(0xFF3E2C8B),
+
       appBar: AppBar(
         title: const Text(
           "Snaphunt",
@@ -37,10 +59,14 @@ class _HomeScreenState extends State<HomeScreen> {
         elevation: 0,
       ),
 
+      // Center column with two large actions: Host and Join
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // -------------------------------
+            // Host
+            // -------------------------------
             const Text(
               'Host',
               style: TextStyle(
@@ -50,6 +76,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(height: 12),
+
+            // Big tappable icon -> HostGameScreen
             GestureDetector(
               onTap: () {
                 Navigator.push(
@@ -65,7 +93,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 height: 160,
               ),
             ),
+
             const SizedBox(height: 40),
+
+            // -------------------------------
+            // Join
+            // -------------------------------
             const Text(
               'Join',
               style: TextStyle(
@@ -75,6 +108,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(height: 12),
+
+            // Big tappable icon -> JoinGameScreen
             GestureDetector(
               onTap: () {
                 Navigator.push(
@@ -94,6 +129,8 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
 
+      // Decorative bottom nav (icons only)
+      // Currently does not change the body; just updates the selected icon.
       bottomNavigationBar: BottomNavigationBar(
         backgroundColor: const Color(0xFFFFC943),
         currentIndex: _selectedIndex,
