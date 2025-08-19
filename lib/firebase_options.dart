@@ -45,7 +45,7 @@ class DefaultFirebaseOptions {
     appId: '1:524135744410:android:a2148bfb6a0f9ea00d7023',
     messagingSenderId: '524135744410',
     projectId: 'snaphunt-d99b8',
-    storageBucket: 'snaphunt-d99b8.firebasestorage.app',
+    storageBucket: 'snaphunt-d99b8.appspot.com',
   );
 
   static const FirebaseOptions web = FirebaseOptions(
@@ -54,7 +54,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '524135744410',
     projectId: 'snaphunt-d99b8',
     authDomain: 'snaphunt-d99b8.firebaseapp.com',
-    storageBucket: 'snaphunt-d99b8.firebasestorage.app',
+    storageBucket: 'snaphunt-d99b8.appspot.com',
     measurementId: 'G-0V33X5Z0NG',
   );
 
@@ -63,7 +63,7 @@ class DefaultFirebaseOptions {
     appId: '1:524135744410:ios:220c3170fa1d2f930d7023',
     messagingSenderId: '524135744410',
     projectId: 'snaphunt-d99b8',
-    storageBucket: 'snaphunt-d99b8.firebasestorage.app',
+    storageBucket: 'snaphunt-d99b8.appspot.com',
     iosBundleId: 'com.example.snaphunt',
   );
 
@@ -72,7 +72,7 @@ class DefaultFirebaseOptions {
     appId: '1:524135744410:ios:220c3170fa1d2f930d7023',
     messagingSenderId: '524135744410',
     projectId: 'snaphunt-d99b8',
-    storageBucket: 'snaphunt-d99b8.firebasestorage.app',
+    storageBucket: 'snaphunt-d99b8.appspot.com',
     iosBundleId: 'com.example.snaphunt',
   );
 
@@ -82,7 +82,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '524135744410',
     projectId: 'snaphunt-d99b8',
     authDomain: 'snaphunt-d99b8.firebaseapp.com',
-    storageBucket: 'snaphunt-d99b8.firebasestorage.app',
+    storageBucket: 'snaphunt-d99b8.appspot.com',
     measurementId: 'G-HYGSF5DBQS',
   );
 }
