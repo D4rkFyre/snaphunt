@@ -1,4 +1,3 @@
-// lib/services/firestore_refs.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// ---------------------------------------------------------------------------
@@ -14,6 +13,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 /// What we store right now:
 /// - `/codes/{CODE}` → links a human join code (like "ABCD23") to a game id
 /// - `/games/{gameId}` → the game itself (status, players, etc.)
+/// - `/games/{gameId}/clues/{clueId}` → image clue uploaded by the host
 ///
 /// Why this file helps:
 /// - If we rename a path later, we fix it **here once**
@@ -27,48 +27,31 @@ class FirestoreRefs {
   // -------------------------------------------------------------------------
 
   /// The "games" folder: `/games`
-  ///
-  /// Usage:
-  /// ```dart
-  /// final gamesFolder = FirestoreRefs.games(db);
-  /// final snapshot = await gamesFolder.get(); // list all games (dev only)
-  /// ```
   static CollectionReference<Map<String, dynamic>> games(
-    FirebaseFirestore db,
-  ) => db.collection('games');
+      FirebaseFirestore db,
+      ) => db.collection('games');
+
+  /// The "clues" folder for a specific game: `/games/{gameId}/clues`
+  static CollectionReference<Map<String, dynamic>> clues(
+      FirebaseFirestore db,
+      String gameId,
+      ) => db.collection('games').doc(gameId).collection('clues');
 
   // -------------------------------------------------------------------------
   // Documents (files)
   // -------------------------------------------------------------------------
 
   /// A single game file: `/games/{gameId}`
-  ///
-  /// Each game document currently has fields like:
-  /// - `joinCode` (String)   e.g., "ABCD23"
-  /// - `status`   (String)   "waiting" or "active"
-  /// - `players`  (List<String>) nicknames shown in the lobby
-  /// - `createdAt`(Timestamp)
   static DocumentReference<Map<String, dynamic>> gameDoc(
       FirebaseFirestore db,
       String gameId,
       ) => db.collection('games').doc(gameId);
 
   /// A single code file: `/codes/{CODE}`
-  ///
-  /// The file name *is* the join code itself (e.g., "ABCD23").
-  /// We use this to quickly find which game a code belongs to.
-  ///
-  /// Current fields:
-  /// - `status`    (String)   "reserved" (means this code is taken)
-  /// - `gameId`    (String)   points to `/games/{gameId}`
-  /// - `createdAt` (Timestamp)
-  ///
-  /// Note: We create the code file and the game file **together** in one
-  /// transaction during hosting, so they always match.
   static DocumentReference<Map<String, dynamic>> codeDoc(
-    FirebaseFirestore db,
-    String code,
-  ) => db.collection('codes').doc(code);
+      FirebaseFirestore db,
+      String code,
+      ) => db.collection('codes').doc(code);
 
   // -------------------------------------------------------------------------
   // String path helpers (nice for logs or rules docs)
