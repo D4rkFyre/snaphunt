@@ -1,45 +1,37 @@
 // lib/main.dart
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'screens/home_screen.dart';
 
-/// A single, top-level Future that runs exactly once per process.
-/// Even if hot restart tries to re-enter main, this remains initialized.
-final Future<FirebaseApp> _firebaseInit = (() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // If already initialized, just return the default app.
-  try {
-    return Firebase.app();
-  } catch (_) {
-    // Not initialized yet: try to init.
-    try {
-      return await Firebase.initializeApp(
+  // If no Firebase app yet, initialize appropriately per platform:
+  if (Firebase.apps.isEmpty) {
+    if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
+      // ✅ Bind to the native default created by google-services (avoids duplicate-app)
+      await Firebase.initializeApp();
+    } else {
+      // Web/Windows/Linux need explicit options
+      await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
-    } on FirebaseException catch (e) {
-      // If another path initialized in parallel, reuse it.
-      if (e.code == 'duplicate-app') {
-        return Firebase.app();
-      }
-      rethrow;
     }
   }
-})();
 
-Future<void> main() async {
-  await _firebaseInit; // ensure once
-  try {
-    final auth = FirebaseAuth.instance;
-    if (auth.currentUser == null) {
-      await auth.signInAnonymously();
-    }
-  } on FirebaseAuthException catch (e) {
-    // If Anonymous is disabled or something odd happens, you’ll see it.
-    debugPrint('Anon sign-in failed: ${e.code}');
+  // Ensure we are authenticated (anonymous is fine for this project)
+  final auth = FirebaseAuth.instance;
+  if (auth.currentUser == null) {
+    await auth.signInAnonymously();
   }
+
+  // Optional quick sanity logs while debugging:
+  // debugPrint('Firebase apps count: ${Firebase.apps.length}');
+  // debugPrint('Current UID: ${FirebaseAuth.instance.currentUser?.uid}');
+
   runApp(const SnaphuntApp());
 }
 
