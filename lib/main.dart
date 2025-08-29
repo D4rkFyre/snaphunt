@@ -3,34 +3,26 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'screens/home_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // If no Firebase app yet, initialize appropriately per platform:
+  // Initialize Firebase exactly once.
   if (Firebase.apps.isEmpty) {
     if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
-      // ✅ Bind to the native default created by google-services (avoids duplicate-app)
+      // Attach to the native default app created by google-services.* to avoid duplicate-app errors.
       await Firebase.initializeApp();
     } else {
-      // Web/Windows/Linux need explicit options
+      // Web/Windows/Linux need explicit options from firebase_options.dart
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
     }
   }
 
-  // Ensure we are authenticated (anonymous is fine for this project)
-  final auth = FirebaseAuth.instance;
-  if (auth.currentUser == null) {
-    await auth.signInAnonymously();
-  }
-
-  // Optional quick sanity logs while debugging:
-  // debugPrint('Firebase apps count: ${Firebase.apps.length}');
-  // debugPrint('Current UID: ${FirebaseAuth.instance.currentUser?.uid}');
+  // 🔓 No auth needed — rules are fully open. If you keep firebase_auth in your project,
+  // you can still optionally attempt a sign-in here, but it's unnecessary now.
 
   runApp(const SnaphuntApp());
 }
