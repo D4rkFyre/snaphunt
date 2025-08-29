@@ -21,9 +21,6 @@ Future<void> main() async {
     }
   }
 
-  // 🔓 No auth needed — rules are fully open. If you keep firebase_auth in your project,
-  // you can still optionally attempt a sign-in here, but it's unnecessary now.
-
   runApp(const SnaphuntApp());
 }
 
