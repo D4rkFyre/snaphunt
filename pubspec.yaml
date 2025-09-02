@@ -32,6 +32,9 @@ dependencies:
   # Icons
   flutter_svg: ^2.2.0
 
+  # tutorial + remember once
+  shared_preferences: ^2.3.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
