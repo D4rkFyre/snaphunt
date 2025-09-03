@@ -159,7 +159,7 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
       backgroundColor: const Color(0xFF3E2C8B),
       appBar: AppBar(
         title: const Text(
-          "Snaphunt",
+          "Join Game",
           style: TextStyle(
             color: Colors.yellowAccent,
             fontSize: 40,
