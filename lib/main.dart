@@ -3,8 +3,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
-// import 'screens/home_screen.dart';
-import 'screens/clue_submission_screen.dart';
+import 'screens/home_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -12,8 +11,10 @@ Future<void> main() async {
   // Initialize Firebase exactly once.
   if (Firebase.apps.isEmpty) {
     if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
+      // Attach to the native default app created by google-services.* to avoid duplicate-app errors.
       await Firebase.initializeApp();
     } else {
+      // Web/Windows/Linux need explicit options from firebase_options.dart
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
@@ -39,11 +40,7 @@ class SnaphuntApp extends StatelessWidget {
           brightness: Brightness.dark,
         ),
       ),
-      // TEMP for testing:
-      home: const PhotoTasksScreen(),
-
-      // When you’re done testing, switch back:
-      // home: const HomeScreen(),
+      home: const HomeScreen(), // <- back to your normal home flow
     );
   }
 }

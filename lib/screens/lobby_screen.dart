@@ -5,6 +5,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
+import 'clue_submission_screen.dart'; // <- add this
 
 /// ---------------------------------------------------------------------------
 /// CreateGameLobbyScreen
@@ -12,47 +13,34 @@ import 'package:snaphunt/services/firestore_refs.dart';
 /// Purpose
 /// - Show a **live lobby** for a specific game: who’s joined and the game status.
 /// - Lets the **host** start the game (players only watch).
-///
-/// What this screen does
-/// - Subscribes to `/games/{gameId}` in real time (StreamBuilder).
-/// - Renders the **join code** (with a copy button).
-/// - Shows a grid of **player nicknames** from `players[]`.
-/// - If `isHost == true` and `status == "waiting"`, shows **Start Game**.
-///
-/// Inputs
-/// - [gameId]   : the Firestore id for `/games/{gameId}`
-/// - [joinCode] : the human code shown to players (e.g., "ABCD23")
-/// - [isHost]   : host sees the Start button; players do not
-/// - [db]       : optional Firestore instance (tests pass a Fake; app uses real)
-///
-/// Firestore actions
-/// - READ (stream): `/games/{gameId}` → `status`, `players[]`
-/// - WRITE (host): set `status: "active"` when starting the game
-///
-/// Navigation
-/// - After Start, we will navigate to our first in-game screen (TODO marked below).
+/// - When host starts (status -> "active"), **players** auto-navigate to Clues.
 /// ---------------------------------------------------------------------------
-class CreateGameLobbyScreen extends StatelessWidget {
+class CreateGameLobbyScreen extends StatefulWidget {
   const CreateGameLobbyScreen({
     super.key,
     required this.gameId,
     required this.joinCode,
-    required this.isHost,   // controls Start Game visibility
-    this.db,                // optional injection for tests
+    required this.isHost,
+    this.db,
   });
 
-  final String gameId;     // e.g., "F2mJq7H..." (auto-id from game creation)
-  final String joinCode;   // e.g., "ABCD23" (human-friendly)
+  final String gameId;
+  final String joinCode;
   final bool isHost;
   final FirebaseFirestore? db;
 
-  // Use the injected Firestore (tests) or the real one (app)
-  FirebaseFirestore get _db => db ?? FirebaseFirestore.instance;
+  @override
+  State<CreateGameLobbyScreen> createState() => _CreateGameLobbyScreenState();
+}
+
+class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
+  bool _navigated = false; // ensure we navigate once for joiners
+
+  FirebaseFirestore get _db => widget.db ?? FirebaseFirestore.instance;
 
   @override
   Widget build(BuildContext context) {
-    // Document reference for this game
-    final gameDoc = FirestoreRefs.gameDoc(_db, gameId);
+    final gameDoc = FirestoreRefs.gameDoc(_db, widget.gameId);
 
     return Scaffold(
       backgroundColor: const Color(0xFF3E2C8B),
@@ -76,28 +64,37 @@ class CreateGameLobbyScreen extends StatelessWidget {
         child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
           stream: gameDoc.snapshots(),
           builder: (context, snap) {
-            // Loading state (first frame)
             if (snap.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
             }
-
-            // Game deleted / not found
             if (!snap.hasData || !snap.data!.exists) {
               return const Center(
                 child: Text('Game not found', style: TextStyle(color: Colors.white)),
               );
             }
 
-            // Pull status + players from the snapshot
             final data = snap.data!.data()!;
             final status = (data['status'] as String?) ?? 'waiting';
             final players = (data['players'] as List?)?.cast<String>() ?? const <String>[];
 
+            // -----------------------------------------------------------------
+            // Player (not host) → auto-navigate to Clues when status == "active"
+            // -----------------------------------------------------------------
+            if (!widget.isHost && !_navigated && status == 'active') {
+              _navigated = true; // prevent multiple pushes
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(
+                    builder: (_) => const PhotoTasksScreen(),
+                  ),
+                );
+              });
+            }
+
             return Column(
               children: [
-                // -----------------------------------------------------------------
-                // Join code pill with a copy button
-                // -----------------------------------------------------------------
+                // Join code with copy
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                   decoration: BoxDecoration(
@@ -108,7 +105,7 @@ class CreateGameLobbyScreen extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        joinCode,
+                        widget.joinCode,
                         style: const TextStyle(
                           fontSize: 28,
                           fontWeight: FontWeight.bold,
@@ -118,7 +115,7 @@ class CreateGameLobbyScreen extends StatelessWidget {
                       const SizedBox(width: 12),
                       GestureDetector(
                         onTap: () {
-                          Clipboard.setData(ClipboardData(text: joinCode));
+                          Clipboard.setData(ClipboardData(text: widget.joinCode));
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text("Game code copied to clipboard!"),
@@ -138,15 +135,11 @@ class CreateGameLobbyScreen extends StatelessWidget {
                 ),
 
                 const SizedBox(height: 8),
-                // Small status line: handy for debugging / verifying context
-                Text('gameId: $gameId • status: $status', style: const TextStyle(color: Colors.white70)),
+                Text('gameId: ${widget.gameId} • status: $status',
+                    style: const TextStyle(color: Colors.white70)),
                 const SizedBox(height: 20),
 
-                // -----------------------------------------------------------------
-                // Players list (live)
-                // - Shows “Waiting for players…” if none yet
-                // - Otherwise renders a simple 3-column grid of nicknames
-                // -----------------------------------------------------------------
+                // Players grid
                 Expanded(
                   child: Container(
                     width: double.infinity,
@@ -166,8 +159,9 @@ class CreateGameLobbyScreen extends StatelessWidget {
                         ),
                       ),
                     )
-                    : GridView.builder(
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        : GridView.builder(
+                      gridDelegate:
+                      const SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: 3,
                         mainAxisSpacing: 20,
                         crossAxisSpacing: 20,
@@ -204,29 +198,22 @@ class CreateGameLobbyScreen extends StatelessWidget {
 
                 const SizedBox(height: 20),
 
-                // -----------------------------------------------------------------
-                // Start Game (host only)
-                // - Only visible for the host
-                // - Only enabled while status == "waiting"
-                // - On press, flips status to "active"
-                // -----------------------------------------------------------------
-                if (isHost)
+                // Host-only Start Game button
+                if (widget.isHost)
                   ElevatedButton(
                     onPressed: status == 'waiting'
                         ? () async {
                       try {
                         await gameDoc.update({'status': 'active'});
-                        // TODO: Navigate to the first in-game screen, e.g.:
-                        // Navigator.pushReplacement(context, MaterialPageRoute(
-                        //   builder: (_) => InGameScreen(gameId: gameId, db: _db),
-                        // ));
+                        // Host stays on lobby or navigate host elsewhere if you prefer:
+                        // Navigator.pushReplacement(... host view ...)
                       } catch (e) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('Failed to start game: $e')),
                         );
                       }
                     }
-                    : null,
+                        : null,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.greenAccent,
                       foregroundColor: Colors.black,
