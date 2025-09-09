@@ -1,9 +1,7 @@
 // lib/screens/photo_tasks_screen.dart
-import 'dart:io'; // for File
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-// Uncomment when you want real uploads
-// import 'package:firebase_storage/firebase_storage.dart';
 
 class PhotoTasksScreen extends StatefulWidget {
   const PhotoTasksScreen({super.key});
@@ -16,7 +14,7 @@ class _PhotoTasksScreenState extends State<PhotoTasksScreen> {
   final ImagePicker _picker = ImagePicker();
   final int _taskCount = 6;
 
-  // Toggle this to false and use the Firebase code in _uploadSubmission()
+  // Simulated upload so you can see the modal UX.
   static const bool _simulateUpload = true;
 
   late final List<_TaskState> _tasks = List.generate(
@@ -65,26 +63,23 @@ class _PhotoTasksScreenState extends State<PhotoTasksScreen> {
     );
     if (file == null) return;
 
-    // Show progress modal
     _showUploadingDialog();
 
     try {
-      final url = await _uploadSubmission(file);
+      // Simulate upload
+      await Future.delayed(const Duration(milliseconds: 1200));
 
       if (!mounted) return;
       Navigator.of(context).pop(); // dismiss modal
 
       setState(() {
         _tasks[index].submission = file;
-        _tasks[index].downloadUrl = url; // may be null if simulated
         _tasks[index].done = true;
       });
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Submission saved.')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Submission saved.')),
+      );
     } catch (e) {
       if (mounted) {
         Navigator.of(context).pop(); // dismiss modal
@@ -95,31 +90,12 @@ class _PhotoTasksScreenState extends State<PhotoTasksScreen> {
     }
   }
 
-  /// Shows a centered, blocking progress dialog.
   void _showUploadingDialog() {
     showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (_) => const _UploadingDialog(),
     );
-  }
-
-  /// Upload logic. Returns a download URL if available, else null.
-  Future<String?> _uploadSubmission(XFile file) async {
-    if (_simulateUpload) {
-      // Simulate a short upload so you can see the modal working.
-      await Future.delayed(const Duration(milliseconds: 1200));
-      return null;
-    }
-
-    // --- Real Firebase Storage upload (uncomment imports too) ---
-    // final storage = FirebaseStorage.instance;
-    // final ref = storage
-    //     .ref()
-    //     .child('submissions/${DateTime.now().millisecondsSinceEpoch}_${file.name}');
-    // await ref.putFile(File(file.path));
-    // final url = await ref.getDownloadURL();
-    // return url;
   }
 
   void _openFullScreenAsset(String assetPath, String heroTag) {
@@ -146,22 +122,71 @@ class _PhotoTasksScreenState extends State<PhotoTasksScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final accent = const Color(0xFFFFC943);
+    const darkBg = Color(0xFF3E2C8B); // solid dark background
+    const accent = Color(0xFFFFC943); // your yellow accent
+
     return Scaffold(
-      backgroundColor: const Color(0xFF3E2C8B),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF3E2C8B),
-        elevation: 0,
-        centerTitle: true,
-        title: const Text(
-          'Photo Tasks',
-          style: TextStyle(
-            color: Colors.yellowAccent,
-            fontSize: 36,
-            fontWeight: FontWeight.bold,
-          ),
+      backgroundColor: darkBg,
+      // Right-side drawer for profile/settings
+      endDrawer: Drawer(
+        backgroundColor: darkBg,
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: const [
+            DrawerHeader(
+              decoration: BoxDecoration(color: accent),
+              child: Text(
+                'Menu',
+                style: TextStyle(
+                  color: Colors.black,
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            ListTile(
+              leading: Icon(Icons.person, color: Colors.white),
+              title: Text('Profile', style: TextStyle(color: Colors.white)),
+            ),
+            ListTile(
+              leading: Icon(Icons.settings, color: Colors.white),
+              title: Text('Settings', style: TextStyle(color: Colors.white)),
+            ),
+          ],
         ),
       ),
+
+      // FIXED top bar (standard AppBar is pinned at top by default)
+      // solid background, centered title, back arrow, and trailing profile icon
+      appBar: AppBar(
+        backgroundColor: darkBg,
+        elevation: 0,
+        centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.of(context).pop(),
+          tooltip: 'Back',
+        ),
+        title: const Text(
+          'Clues',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 22,
+            fontWeight: FontWeight.w600, // medium bold
+          ),
+        ),
+        actions: [
+          Builder(
+            builder: (ctx) => IconButton(
+              icon: const Icon(Icons.person, color: Colors.white),
+              tooltip: 'Menu',
+              onPressed: () => Scaffold.of(ctx).openEndDrawer(),
+            ),
+          ),
+        ],
+      ),
+
+      // Content scrolls under the fixed app bar
       body: ListView.separated(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         itemCount: _tasks.length,
@@ -185,8 +210,7 @@ class _PhotoTasksScreenState extends State<PhotoTasksScreen> {
                 children: [
                   // Prompt image (tap to expand)
                   GestureDetector(
-                    onTap: () =>
-                        _openFullScreenAsset(task.promptAsset, heroPrompt),
+                    onTap: () => _openFullScreenAsset(task.promptAsset, heroPrompt),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(12),
                       child: AspectRatio(
@@ -209,7 +233,7 @@ class _PhotoTasksScreenState extends State<PhotoTasksScreen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // Submit / Done button
+                  // Submit / Done button (accent → green when done)
                   SizedBox(
                     height: 48,
                     child: ElevatedButton(
@@ -234,7 +258,7 @@ class _PhotoTasksScreenState extends State<PhotoTasksScreen> {
                     const SizedBox(height: 10),
                     Row(
                       children: [
-                        // Tappable thumbnail
+                        // Tappable thumbnail of user's submission
                         GestureDetector(
                           onTap: () => _openFullScreenFile(
                               task.submission!.path, heroSubmission),
@@ -252,21 +276,19 @@ class _PhotoTasksScreenState extends State<PhotoTasksScreen> {
                           ),
                         ),
                         const SizedBox(width: 12),
-                        Expanded(
+                        const Expanded(
                           child: Text(
-                            task.downloadUrl == null
-                                ? 'Your photo (tap to expand)'
-                                : 'Uploaded ✓ (tap to view)',
-                            style: const TextStyle(color: Colors.white70),
+                            'Your photo (tap to expand)',
+                            style: TextStyle(color: Colors.white70),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         IconButton(
+                          tooltip: 'View full size',
                           onPressed: () => _openFullScreenFile(
                               task.submission!.path, heroSubmission),
                           icon: const Icon(Icons.open_in_full,
                               color: Colors.white70),
-                          tooltip: 'View full size',
                         ),
                       ],
                     ),
@@ -286,11 +308,9 @@ class _TaskState {
   final String promptAsset;
   bool done = false;
   XFile? submission;
-  String? downloadUrl; // set if you do real uploads
 }
 
-/// Centered overlay dialog with spinner + text.
-/// Blocks taps and auto-dismissed programmatically.
+/// Centered uploading popup
 class _UploadingDialog extends StatelessWidget {
   const _UploadingDialog();
 
@@ -305,7 +325,6 @@ class _UploadingDialog extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: const [
-            SizedBox(height: 4),
             CircularProgressIndicator(),
             SizedBox(height: 16),
             Text(
@@ -314,7 +333,6 @@ class _UploadingDialog extends StatelessWidget {
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 16,
-                height: 1.3,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -325,7 +343,7 @@ class _UploadingDialog extends StatelessWidget {
   }
 }
 
-// Full-screen viewer with pinch-to-zoom (supports asset or file)
+// Full-screen image viewer (asset or file) with pinch-to-zoom
 class _FullScreenPhoto extends StatelessWidget {
   const _FullScreenPhoto({
     required this.heroTag,
