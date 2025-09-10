@@ -40,7 +40,7 @@ class SnaphuntApp extends StatelessWidget {
           brightness: Brightness.dark,
         ),
       ),
-      home: const HomeScreen(),
+      home: const HomeScreen(), // <- back to your normal home flow
     );
   }
 }
