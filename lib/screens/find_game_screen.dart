@@ -7,6 +7,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/services/join_code.dart';
 
+//this is for submission logic
+import 'clue_submission_screen.dart';
+import 'package:image_picker/image_picker.dart';
+
 /// ---------------------------------------------------------------------------
 /// JoinGameScreen
 /// ---------------------------------------------------------------------------
@@ -43,6 +47,12 @@ class JoinGameScreen extends StatefulWidget {
 class _JoinGameScreenState extends State<JoinGameScreen> {
   // Decorative bottom nav index (unrelated to join logic)
   int _selectedIndex = 0;
+
+  //clue submission stuff
+  final ImagePicker _picker = ImagePicker();
+  final List<XFile> _submissionFiles = [];
+  final _photoRowKey = GlobalKey();
+
 
   // Text fields: code + nickname
   final TextEditingController _gameCodeController = TextEditingController();
@@ -239,7 +249,58 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
                 ),
               ),
 
+
+              //submission button logic bellow
+              const SizedBox(height: 16),
+              const SizedBox(height: 24),
+
+              const Text(
+                'Upload Guesses (Photos)',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+
               const SizedBox(height: 12),
+
+              _CoachTarget(
+                key: _photoRowKey,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.camera_alt, size: 28, color: Colors.white),
+                      onPressed: _busy
+                          ? null
+                          : () async {
+                        final file = await _picker.pickImage(source: ImageSource.camera);
+                        if (file != null) {
+                          setState(() => _submissionFiles.add(file));
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 24),
+                    IconButton(
+                      icon: const Icon(Icons.photo_library, size: 28, color: Colors.white),
+                      onPressed: _busy
+                          ? null
+                          : () async {
+                        final files = await _picker.pickMultiImage();
+                        if (files.isNotEmpty) {
+                          setState(() => _submissionFiles.addAll(files));
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              //end of submission logic
+
+              const SizedBox(height: 12),
+
 
               // 3) Error and progress indicators
               if (_error != null)
@@ -272,6 +333,29 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
               ),
+
+              const SizedBox(height: 12),
+              //button to take me to the new submission screen
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.push(
+                     context,
+                     MaterialPageRoute(
+                       builder: (context) => const PhotoTasksScreen(),
+                     ),
+                   );
+                  },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.greenAccent,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 32),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                ),
+                child: const Text(
+                  'Submission Debug',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
             ],
           ),
         ),
@@ -299,4 +383,13 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
       ),
     );
   }
+}
+
+//needed for submission logic
+/// Wraps a target so it’s easy to measure its rect on screen
+class _CoachTarget extends StatelessWidget {
+  final Widget child;
+  const _CoachTarget({super.key, required this.child});
+  @override
+  Widget build(BuildContext context) => child;
 }

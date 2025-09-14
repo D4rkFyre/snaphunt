@@ -37,9 +37,27 @@ class FirestoreRefs {
       String gameId,
       ) => db.collection('games').doc(gameId).collection('clues');
 
+  /// The submissions folder
+  static CollectionReference<Map<String, dynamic>> submissions(
+      FirebaseFirestore db,
+      String gameId,
+      String submissionId,
+      String clueId,
+      String playerName,
+      String imageUrl,
+      String createdAt
+      ) => db.collection('games').doc(gameId).collection('submissions');
+
+
   // -------------------------------------------------------------------------
   // Documents (files)
   // -------------------------------------------------------------------------
+
+  ///A single submission file: '/submissions/{submissionId}'
+  static DocumentReference<Map<String, dynamic>> submissionDoc(
+      FirebaseFirestore db,
+      String submissionId,
+      ) => db.collection('submissions').doc(submissionId);
 
   /// A single game file: `/games/{gameId}`
   static DocumentReference<Map<String, dynamic>> gameDoc(
@@ -56,6 +74,8 @@ class FirestoreRefs {
   // -------------------------------------------------------------------------
   // String path helpers (nice for logs or rules docs)
   // -------------------------------------------------------------------------
+
+  static String submissionDocPath(String submissionId) => 'submissions/$submissionId';
 
   /// Returns "games/{gameId}"
   static String gameDocPath(String gameId) => 'games/$gameId';

@@ -105,6 +105,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
 
       for (final x in _clueFiles) {
         final file = File(x.path);
+
         await _repo.uploadClue(
           gameId: game.id,
           file: file,
