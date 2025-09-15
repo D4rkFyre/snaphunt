@@ -3,15 +3,21 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/models/game_model.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/services/join_code.dart';
+import 'package:snaphunt/models/clue_model.dart';
+import 'package:snaphunt/models/submission_model.dart';
 import 'dart:io';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:uuid/uuid.dart';
 
 class GameRepository {
   final FirebaseFirestore db;
+  final FirebaseStorage storage; // ADDED
 
-  GameRepository({FirebaseFirestore? firestore})
-      : db = firestore ?? FirebaseFirestore.instance;
+  GameRepository({
+    FirebaseFirestore? firestore,
+    FirebaseStorage? firebaseStorage, // ADDED
+  })  : db = firestore ?? FirebaseFirestore.instance,
+        storage = firebaseStorage ?? FirebaseStorage.instance; // ADDED
 
   Future<Game> createGame({String? hostName}) async {
     const maxAttempts = 10;
@@ -76,7 +82,7 @@ class GameRepository {
     required String createdBy,
   }) async {
     final clueId = const Uuid().v4();
-    final storageRef = FirebaseStorage.instance
+    final storageRef = storage // CHANGED from FirebaseStorage.instance
         .ref()
         .child('games/$gameId/clues/$clueId.jpg');
 
@@ -90,5 +96,56 @@ class GameRepository {
     });
 
     return downloadURL;
+  }
+
+  /// Stream all clues for a given game, ordered by creation time.
+  /// Note: createdAt is set via serverTimestamp() on write; initial nulls will settle.
+  Stream<List<Clue>> streamClues(String gameId) {
+    return FirestoreRefs.clues(db, gameId)
+        .orderBy('createdAt', descending: false)
+        .snapshots()
+        .map((qs) => qs.docs.map((d) => Clue.fromSnapshot(d)).toList());
+  }
+
+  /// Upload a player's submission image and create a submission doc.
+  /// Storage: games/{gameId}/submissions/{submissionId}.jpg
+  /// Firestore: /games/{gameId}/submissions/{submissionId}
+  Future<Submission> uploadPlayerSubmission({
+    required String gameId,
+    required String clueId,
+    required String playerId, // deviceId or nickname
+    required File imageFile,
+  }) async {
+    final submissionId = const Uuid().v4();
+
+    // 1) Upload image to Storage
+    final storageRef = storage
+        .ref()
+        .child('games/$gameId/submissions/$submissionId.jpg');
+
+    await storageRef.putFile(imageFile);
+    final downloadURL = await storageRef.getDownloadURL();
+
+    // 2) Write Firestore doc
+    final docRef = FirestoreRefs.submissions(db, gameId).doc(submissionId);
+    await docRef.set({
+      'gameId': gameId,
+      'clueId': clueId,
+      'playerId': playerId,
+      'imageUrl': downloadURL,
+      'status': 'pending',
+      'createdAt': FieldValue.serverTimestamp(), // <-- key change
+    });
+
+    // Return a Submission; createdAt will be null until server fills it
+    return Submission(
+      id: submissionId,
+      gameId: gameId,
+      clueId: clueId,
+      playerId: playerId,
+      imageUrl: downloadURL,
+      status: 'pending',
+      createdAt: null,  // will resolve in subsequent snapshots
+    );
   }
 }

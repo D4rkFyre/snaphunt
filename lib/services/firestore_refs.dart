@@ -1,4 +1,7 @@
+// lib/services/firestore_refs.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:snaphunt/models/clue_model.dart';
+import 'package:snaphunt/models/submission_model.dart';
 
 /// ---------------------------------------------------------------------------
 /// FirestoreRefs
@@ -37,6 +40,52 @@ class FirestoreRefs {
       String gameId,
       ) => db.collection('games').doc(gameId).collection('clues');
 
+  /// The "submissions" folder: `/games/{gameId}/submissions`
+  static CollectionReference<Map<String, dynamic>> submissions(
+      FirebaseFirestore db,
+      String gameId,
+      ) => db.collection('games').doc(gameId).collection('submissions');
+
+  // Typed converters (for compile-time safety in reads/writes)
+
+  static CollectionReference<Clue> cluesTyped(
+      FirebaseFirestore db,
+      String gameId,
+      ) => clues(db, gameId).withConverter<Clue>(
+    fromFirestore: (doc, _) => Clue.fromSnapshot(doc),
+    toFirestore: (clue, _) => clue.toJson(),
+  );
+
+  static CollectionReference<Submission> submissionsTyped(
+      FirebaseFirestore db,
+      String gameId,
+      ) => submissions(db, gameId).withConverter<Submission>(
+    fromFirestore: (doc, _) => Submission.fromSnapshot(doc),
+    toFirestore: (sub, _) => sub.toJson(),
+  );
+
+  // Typed single-doc helpers (optional sugar)
+
+  // /games/{gameId}/clues/{clueId} as DocumentReference<Clue>
+  static DocumentReference<Clue> clueDocTyped(
+      FirebaseFirestore db,
+      String gameId,
+      String clueId,
+      ) => clueDoc(db, gameId, clueId).withConverter<Clue>(
+    fromFirestore: (doc, _) => Clue.fromSnapshot(doc),
+    toFirestore: (clue, _) => clue.toJson(),
+  );
+
+// /games/{gameId}/submissions/{submissionId} as DocumentReference<Submission>
+  static DocumentReference<Submission> submissionDocTyped(
+      FirebaseFirestore db,
+      String gameId,
+      String submissionId,
+      ) => submissionDoc(db, gameId, submissionId).withConverter<Submission>(
+    fromFirestore: (doc, _) => Submission.fromSnapshot(doc),
+    toFirestore: (sub, _) => sub.toJson(),
+  );
+
   // -------------------------------------------------------------------------
   // Documents (files)
   // -------------------------------------------------------------------------
@@ -53,6 +102,21 @@ class FirestoreRefs {
       String code,
       ) => db.collection('codes').doc(code);
 
+  /// A single clue file: `/games/{gameId}/clues/{clueId}`
+  static DocumentReference<Map<String, dynamic>> clueDoc(
+      FirebaseFirestore db,
+      String gameId,
+      String clueId,
+      ) => db.collection('games').doc(gameId).collection('clues').doc(clueId);
+
+  /// A single submission file: `/games/{gameId}/submissions/{submissionId}`
+  static DocumentReference<Map<String, dynamic>> submissionDoc(
+      FirebaseFirestore db,
+      String gameId,
+      String submissionId,
+      ) => db.collection('games').doc(gameId).collection('submissions').doc(submissionId);
+
+
   // -------------------------------------------------------------------------
   // String path helpers (nice for logs or rules docs)
   // -------------------------------------------------------------------------
@@ -62,4 +126,12 @@ class FirestoreRefs {
 
   /// Returns "codes/{code}"
   static String codeDocPath(String code) => 'codes/$code';
+
+  /// String helper: "games/{gameId}/submissions/{submissionId}"
+  static String submissionDocPath(String gameId, String submissionId) =>
+      'games/$gameId/submissions/$submissionId';
+
+  /// Returns "games/{gameId}/clues/{clueId}"
+  static String clueDocPath(String gameId, String clueId) =>
+      'games/$gameId/clues/$clueId';
 }
