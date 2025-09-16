@@ -25,7 +25,9 @@ class Clue {
     return Clue(
       id: snap.id,
       imageUrl: d['imageUrl'] as String,
-      createdAt: (d['createdAt'] as Timestamp).toDate(),
+      // Safely handle null createdAt (e.g. right after serverTimestamp write)
+      createdAt: (d['createdAt'] as Timestamp?)?.toDate() ??
+          DateTime.fromMillisecondsSinceEpoch(0),
       createdBy: d['createdBy'] as String,
     );
   }

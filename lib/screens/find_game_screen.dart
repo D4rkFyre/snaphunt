@@ -77,6 +77,9 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
   /// Navigation:
   /// - On success → push Lobby screen with `isHost: false`.
   Future<void> _join() async {
+    // Close the keyboard for a clean transition
+    FocusScope.of(context).unfocus();
+
     // Normalize user input
     final rawCode = _gameCodeController.text.trim();
     final code = rawCode.toUpperCase();
@@ -138,8 +141,9 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
           builder: (_) => CreateGameLobbyScreen(
             gameId: gameId,
             joinCode: code,
-            isHost: false,  // player view → no Start Game button
-            db: _db,        // pass the same Firestore instance for consistency/tests
+            isHost: false,     // player view → no Start Game button
+            playerId: playerName, // <-- pass nickname through
+            db: _db,           // pass the same Firestore instance for consistency/tests
           ),
         ),
       );
@@ -188,6 +192,7 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
                 controller: _nameController,
                 style: const TextStyle(color: Colors.white),
                 textAlign: TextAlign.center,
+                textInputAction: TextInputAction.next,
                 decoration: InputDecoration(
                   hintText: 'Enter nickname (e.g., PlayerTwo)',
                   hintStyle: const TextStyle(color: Colors.white54),
@@ -222,6 +227,8 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
                 style: const TextStyle(color: Colors.white),
                 textAlign: TextAlign.center,
                 textCapitalization: TextCapitalization.characters,  // helps user type uppercase
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _busy ? null : _join(),
                 decoration: InputDecoration(
                   hintText: 'Enter code',
                   hintStyle: const TextStyle(color: Colors.white54),

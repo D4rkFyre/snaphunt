@@ -1,3 +1,4 @@
+// lib/screens/host_screen.dart
 import 'dart:io';
 
 import 'lobby_screen.dart';
@@ -18,11 +19,13 @@ class HostGameScreen extends StatefulWidget {
     super.key,
     GameRepository? repo,
     FirebaseFirestore? db,
+    this.requireCluesToCreate = true, // NEW (test-only convenience)
   })  : _repo = repo,
         _db = db;
 
   final GameRepository? _repo;
   final FirebaseFirestore? _db;
+  final bool requireCluesToCreate; // NEW
 
   @override
   State<HostGameScreen> createState() => _HostGameScreenState();
@@ -120,6 +123,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
             gameId: game.id,
             joinCode: game.joinCode,
             isHost: true,
+            playerId: hostName, // pass host nickname through
             db: _db,
           ),
         ),
@@ -304,7 +308,9 @@ class _HostGameScreenState extends State<HostGameScreen> {
               _CoachTarget(
                 key: _createKey,
                 child: ElevatedButton(
-                  onPressed: _busy ? null : _createGame,
+                  onPressed: (_busy || (widget.requireCluesToCreate && _clueFiles.isEmpty))
+                      ? null
+                      : _createGame,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.greenAccent,
                     foregroundColor: Colors.black,

@@ -10,14 +10,20 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:uuid/uuid.dart';
 
 class GameRepository {
-  final FirebaseFirestore db;
-  final FirebaseStorage storage; // ADDED
+  /// NOTE: Make these nullable so we don't touch Firebase singletons in tests
+  /// unless a method actually needs them.
+  final FirebaseFirestore? _db;
+  final FirebaseStorage? _storage;
 
   GameRepository({
     FirebaseFirestore? firestore,
-    FirebaseStorage? firebaseStorage, // ADDED
-  })  : db = firestore ?? FirebaseFirestore.instance,
-        storage = firebaseStorage ?? FirebaseStorage.instance; // ADDED
+    FirebaseStorage? firebaseStorage,
+  })  : _db = firestore,
+        _storage = firebaseStorage;
+
+  // Lazy getters (only resolve singletons if needed)
+  FirebaseFirestore get db => _db ?? FirebaseFirestore.instance;
+  FirebaseStorage get storage => _storage ?? FirebaseStorage.instance;
 
   Future<Game> createGame({String? hostName}) async {
     const maxAttempts = 10;
@@ -82,9 +88,7 @@ class GameRepository {
     required String createdBy,
   }) async {
     final clueId = const Uuid().v4();
-    final storageRef = storage // CHANGED from FirebaseStorage.instance
-        .ref()
-        .child('games/$gameId/clues/$clueId.jpg');
+    final storageRef = storage.ref().child('games/$gameId/clues/$clueId.jpg');
 
     await storageRef.putFile(file);
     final downloadURL = await storageRef.getDownloadURL();
@@ -119,9 +123,7 @@ class GameRepository {
     final submissionId = const Uuid().v4();
 
     // 1) Upload image to Storage
-    final storageRef = storage
-        .ref()
-        .child('games/$gameId/submissions/$submissionId.jpg');
+    final storageRef = storage.ref().child('games/$gameId/submissions/$submissionId.jpg');
 
     await storageRef.putFile(imageFile);
     final downloadURL = await storageRef.getDownloadURL();
@@ -134,7 +136,7 @@ class GameRepository {
       'playerId': playerId,
       'imageUrl': downloadURL,
       'status': 'pending',
-      'createdAt': FieldValue.serverTimestamp(), // <-- key change
+      'createdAt': FieldValue.serverTimestamp(), // server-side time
     });
 
     // Return a Submission; createdAt will be null until server fills it
@@ -145,7 +147,7 @@ class GameRepository {
       playerId: playerId,
       imageUrl: downloadURL,
       status: 'pending',
-      createdAt: null,  // will resolve in subsequent snapshots
+      createdAt: null,
     );
   }
 }

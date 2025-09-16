@@ -25,7 +25,7 @@ void main() {
     // Seed a WAITING game with some players for the lobby to render.
     final gameRef = await fake.collection('games').add({
       'joinCode': 'ABC123',
-      'status': 'waiting',           // ← must be waiting; enables Start button
+      'status': 'waiting', // ← must be waiting; enables Start button
       'createdAt': DateTime.now(),
       'players': <String>['PlayerOne', 'PlayerTwo'],
     });
@@ -36,7 +36,8 @@ void main() {
         db: fake,
         gameId: gameRef.id,
         joinCode: 'ABC123',
-        isHost: true,   // ← host view shows Start Game
+        isHost: true, // ← host view shows Start Game
+        playerId: 'HostTester', // NEW: required param
       ),
     ));
 
@@ -78,7 +79,8 @@ void main() {
         db: fake,
         gameId: gameRef.id,
         joinCode: 'ABC123',
-        isHost: false,   // ← player view should NOT show Start Game
+        isHost: false, // ← player view should NOT show Start Game
+        playerId: 'PlayerTester', // NEW: required param
       ),
     ));
 
