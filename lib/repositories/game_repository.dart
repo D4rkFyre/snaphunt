@@ -8,6 +8,9 @@ import 'package:snaphunt/models/submission_model.dart';
 import 'dart:io';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:uuid/uuid.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+
 
 class GameRepository {
   /// NOTE: Make these nullable so we don't touch Firebase singletons in tests
@@ -149,5 +152,45 @@ class GameRepository {
       status: 'pending',
       createdAt: null,
     );
+  }
+  /// Calls the Firebase HTTPS Function to score a submission via Cloud Run scorer.
+  /// The backend Function will update the submission doc with { score, status: "scored", components, diagnostics, scoredAt }.
+  /// Throws an Exception on non-200 responses with a short body snippet for easier debugging.
+  Future<void> scoreSubmission({
+    required String gameId,
+    required String submissionId,
+    required String hostUrl,
+    required String playerUrl,
+  }) async {
+    final uri = Uri.parse(
+      'https://us-central1-snaphunt-d99b8.cloudfunctions.net/scoreSubmission',
+    );
+
+    final payload = <String, dynamic>{
+      'gameId': gameId,
+      'submissionId': submissionId,
+      'hostUrl': hostUrl,
+      'playerUrl': playerUrl,
+    };
+
+    http.Response resp;
+    try {
+      resp = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      );
+    } on Exception catch (e) {
+      // Network/transport error
+      throw Exception('Failed to call scoreSubmission: $e');
+    }
+
+    if (resp.statusCode != 200) {
+      final body = resp.body;
+      final snippet = body.length > 240 ? '${body.substring(0, 240)}…' : body;
+      throw Exception(
+        'scoreSubmission failed (${resp.statusCode}): $snippet',
+      );
+    }
   }
 }

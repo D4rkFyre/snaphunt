@@ -31,7 +31,6 @@ Thumbs.db
 # Firebase Functions build + dependencies
 functions/lib/
 functions/node_modules/
-functions/package-lock.json
 
 # ── Android ────────────────────────────────────────────────────────────────
 android/.gradle/

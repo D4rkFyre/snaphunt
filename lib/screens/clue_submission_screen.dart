@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/models/clue_model.dart';
+import 'package:snaphunt/services/firestore_refs.dart';
 
 class ClueSubmissionScreen extends StatefulWidget {
   final String gameId;
@@ -33,7 +34,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
     _repo = widget.repository ?? GameRepository();
   }
 
-  Future<void> _submit({required String clueId}) async {
+  Future<void> _submit({required String clueId, required String hostUrl}) async {
     final source = await showModalBottomSheet<ImageSource>(
       context: context,
       backgroundColor: const Color(0xFF3E2C8B),
@@ -76,7 +77,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
     setState(() => _busy = true);
 
     try {
-      await _repo.uploadPlayerSubmission(
+      final submission = await _repo.uploadPlayerSubmission(
         gameId: widget.gameId,
         clueId: clueId,
         playerId: widget.playerId,
@@ -88,6 +89,71 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Submission uploaded!')),
       );
+      // Begin scoring via HTTPS Function
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Scoring…')),
+        );
+      }
+      try {
+        await _repo.scoreSubmission(
+          gameId: widget.gameId,
+          submissionId: submission.id,
+          hostUrl: hostUrl,
+          playerUrl: submission.imageUrl,
+        );
+        // Try to read score once from Firestore (optional, best-effort).
+        double? score;
+        try {
+          final snap = await FirestoreRefs.submissions(_repo.db, widget.gameId)
+              .doc(submission.id)
+              .get();
+          final data = snap.data() as Map<String, dynamic>?;
+          if (data != null && data['score'] != null) {
+            score = (data['score'] as num).toDouble();
+          }
+        } catch (_) {}
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(score != null ? 'Scored! ${score!.toStringAsFixed(0)}' : 'Scored!')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Scoring failed: $e'),
+              action: SnackBarAction(
+                label: 'RETRY',
+                onPressed: () async {
+                  try {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Scoring…')),
+                    );
+                    await _repo.scoreSubmission(
+                      gameId: widget.gameId,
+                      submissionId: submission.id,
+                      hostUrl: hostUrl,
+                      playerUrl: submission.imageUrl,
+                    );
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Scored!')),
+                      );
+                    }
+                  } catch (e2) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Scoring failed: $e2')),
+                      );
+                    }
+                  }
+                },
+              ),
+            ),
+          );
+        }
+      }
     } catch (e) {
       if (mounted) {
         Navigator.of(context).pop();
@@ -262,7 +328,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
                       SizedBox(
                         height: 48,
                         child: ElevatedButton(
-                          onPressed: _busy ? null : () => _submit(clueId: clue.id),
+                          onPressed: _busy ? null : () => _submit(clueId: clue.id, hostUrl: clue.imageUrl),
                           style: ElevatedButton.styleFrom(
                             backgroundColor:
                             _busy ? Colors.grey : const Color(0xFFFFC943),
