@@ -1,10 +1,11 @@
 // lib/repositories/game_repository.dart
+import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:snaphunt/models/game_model.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/services/join_code.dart';
-import 'dart:io';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:uuid/uuid.dart';
 
 class GameRepository {
@@ -66,28 +67,54 @@ class GameRepository {
       }
     }
 
-    throw StateError('Failed to create a unique join code after $maxAttempts attempts.');
+    throw StateError(
+        'Failed to create a unique join code after $maxAttempts attempts.');
   }
 
   /// Upload a clue image to Firebase Storage and write metadata to Firestore.
+  /// Pass lat/lng to store a GeoPoint on the clue.
   Future<String> uploadClue({
     required String gameId,
     required File file,
     required String createdBy,
+    double? lat,
+    double? lng,
   }) async {
     final clueId = const Uuid().v4();
-    final storageRef = FirebaseStorage.instance
-        .ref()
-        .child('games/$gameId/clues/$clueId.jpg');
+    final storageRef =
+    FirebaseStorage.instance.ref().child('games/$gameId/clues/$clueId.jpg');
 
-    await storageRef.putFile(file);
+    // Optional: attach metadata (handy for debugging)
+    final metadata = SettableMetadata(
+      contentType: 'image/jpeg',
+      customMetadata: {
+        if (lat != null && lng != null) 'lat': '$lat',
+        if (lat != null && lng != null) 'lng': '$lng',
+        'createdBy': createdBy,
+        'gameId': gameId,
+        'clueId': clueId,
+      },
+    );
+
+    await storageRef.putFile(file, metadata);
     final downloadURL = await storageRef.getDownloadURL();
 
-    await FirestoreRefs.clues(db, gameId).doc(clueId).set({
+    final data = <String, dynamic>{
       'imageUrl': downloadURL,
       'createdAt': FieldValue.serverTimestamp(),
       'createdBy': createdBy,
-    });
+      if (lat != null && lng != null) 'location': GeoPoint(lat, lng),
+    };
+
+    // 🧪 debug print so you can confirm the values arriving here
+    // ignore: avoid_print
+    print('[uploadClue] gameId=$gameId clueId=$clueId '
+        'lat=$lat lng=$lng willWriteLocation=${data.containsKey('location')}');
+
+    // Use merge to be resilient to any subsequent partial writes
+    await FirestoreRefs.clues(db, gameId)
+        .doc(clueId)
+        .set(data, SetOptions(merge: true));
 
     return downloadURL;
   }
