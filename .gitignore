@@ -28,10 +28,10 @@ Thumbs.db
 # ── Firebase local state ───────────────────────────────────────────────────
 .firebase/
 
-# Keep these TRACKED (do NOT ignore):
-#   lib/firebase_options.dart
-#   android/app/google-services.json
-#   ios/Runner/GoogleService-Info.plist
+# Firebase Functions build + dependencies
+functions/lib/
+functions/node_modules/
+functions/package-lock.json
 
 # ── Android ────────────────────────────────────────────────────────────────
 android/.gradle/
