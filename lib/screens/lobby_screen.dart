@@ -5,7 +5,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
-import 'clue_submission_screen.dart'; // <- add this
+import 'clue_submission_screen.dart';
 
 /// ---------------------------------------------------------------------------
 /// CreateGameLobbyScreen
@@ -21,12 +21,14 @@ class CreateGameLobbyScreen extends StatefulWidget {
     required this.gameId,
     required this.joinCode,
     required this.isHost,
+    required this.playerId,
     this.db,
   });
 
   final String gameId;
   final String joinCode;
   final bool isHost;
+  final String playerId;
   final FirebaseFirestore? db;
 
   @override
@@ -86,7 +88,10 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
                 if (!mounted) return;
                 Navigator.of(context).pushReplacement(
                   MaterialPageRoute(
-                    builder: (_) => const PhotoTasksScreen(),
+                    builder: (_) => ClueSubmissionScreen(
+                      gameId: widget.gameId,
+                      playerId: widget.playerId,
+                    ),
                   ),
                 );
               });
@@ -205,8 +210,7 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
                         ? () async {
                       try {
                         await gameDoc.update({'status': 'active'});
-                        // Host stays on lobby or navigate host elsewhere if you prefer:
-                        // Navigator.pushReplacement(... host view ...)
+                        // Host stays on lobby or navigate host elsewhere if you prefer
                       } catch (e) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('Failed to start game: $e')),

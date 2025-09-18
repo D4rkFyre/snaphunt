@@ -57,11 +57,13 @@ void main() {
         .thenAnswer((_) async => fakeGame);
 
     // Pump the Host screen with injected repo + db (DI-friendly for tests)
-    await tester.pumpWidget(
-      MaterialApp(
-        home: HostGameScreen(repo: mockRepo, db: fakeDb),
+    await tester.pumpWidget(MaterialApp(
+      home: HostGameScreen(
+        repo: mockRepo,
+        db: fakeDb,
+        requireCluesToCreate: false, // <-- enable button for the test
       ),
-    );
+    ));
 
     // Tap "Create Game" → triggers repo call and then navigation to Lobby.
     await tester.tap(find.text('Create Game'));
