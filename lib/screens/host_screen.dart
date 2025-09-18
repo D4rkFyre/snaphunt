@@ -1,3 +1,4 @@
+// lib/screens/host_screen.dart
 // lib/host_screen.dart
 import 'dart:io';
 import 'dart:math' as math;
@@ -29,11 +30,13 @@ class HostGameScreen extends StatefulWidget {
     super.key,
     GameRepository? repo,
     FirebaseFirestore? db,
+    this.requireCluesToCreate = true, // NEW (test-only convenience)
   })  : _repo = repo,
         _db = db;
 
   final GameRepository? _repo;
   final FirebaseFirestore? _db;
+  final bool requireCluesToCreate; // NEW
 
   @override
   State<HostGameScreen> createState() => _HostGameScreenState();
@@ -46,7 +49,6 @@ class _HostGameScreenState extends State<HostGameScreen> {
 
   final _nameCtrl = TextEditingController();
   final ImagePicker _picker = ImagePicker();
-
   final List<_ClueDraft> _clues = [];
 
   // Tutorial targets
@@ -224,7 +226,8 @@ class _HostGameScreenState extends State<HostGameScreen> {
 
         // debug
         // ignore: avoid_print
-        print('[host] uploading clue: lat=${clue.lat}, lng=${clue.lng}, path=${clue.xfile.path}');
+        print(
+            '[host] uploading clue: lat=${clue.lat}, lng=${clue.lng}, path=${clue.xfile.path}');
 
         await _repo.uploadClue(
           gameId: game.id,
@@ -247,7 +250,8 @@ class _HostGameScreenState extends State<HostGameScreen> {
       } else {
         // debug
         // ignore: avoid_print
-        print('[host] no GPS on any clue -> game area not written (normal fallback)');
+        print(
+            '[host] no GPS on any clue -> game area not written (normal fallback)');
       }
 
       if (!mounted) return;
@@ -259,6 +263,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
             gameId: game.id,
             joinCode: game.joinCode,
             isHost: true,
+            playerId: hostName, // pass host nickname through
             db: _db,
           ),
         ),
@@ -376,7 +381,8 @@ class _HostGameScreenState extends State<HostGameScreen> {
                         final perm = await Geolocator.checkPermission();
                         final last =
                         await Geolocator.getLastKnownPosition().catchError(
-                                (_) => null);
+                              (_) => null,
+                        );
                         if (!mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                           duration: const Duration(seconds: 4),
@@ -517,7 +523,10 @@ class _HostGameScreenState extends State<HostGameScreen> {
               _CoachTarget(
                 key: _createKey,
                 child: ElevatedButton(
-                  onPressed: _busy ? null : _createGame,
+                  onPressed:
+                  (_busy || (widget.requireCluesToCreate && _clues.isEmpty))
+                      ? null
+                      : _createGame,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.greenAccent,
                     foregroundColor: Colors.black,
@@ -592,6 +601,7 @@ class _Coach {
   }
 
   Future<void> _showStep(_CoachStep step, int index, int total) async {
+    // find rect for the target
     final ctx = step.key.currentContext;
     if (ctx == null) return;
 
@@ -631,6 +641,7 @@ class _Coach {
                 ),
               ),
             ),
+            // tooltip card
             Positioned(
               left: offset.dx.clamp(16.0, media.size.width - 16.0),
               top: tooltipAbove
