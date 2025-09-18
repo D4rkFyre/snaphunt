@@ -68,7 +68,8 @@ class GameRepository {
     }
 
     throw StateError(
-        'Failed to create a unique join code after $maxAttempts attempts.');
+      'Failed to create a unique join code after $maxAttempts attempts.',
+    );
   }
 
   /// Upload a clue image to Firebase Storage and write metadata to Firestore.
@@ -84,7 +85,7 @@ class GameRepository {
     final storageRef =
     FirebaseStorage.instance.ref().child('games/$gameId/clues/$clueId.jpg');
 
-    // Optional: attach metadata (handy for debugging)
+    // Optional: attach metadata (handy for debugging in Storage)
     final metadata = SettableMetadata(
       contentType: 'image/jpeg',
       customMetadata: {
@@ -106,16 +107,39 @@ class GameRepository {
       if (lat != null && lng != null) 'location': GeoPoint(lat, lng),
     };
 
-    // 🧪 debug print so you can confirm the values arriving here
+    // debug
     // ignore: avoid_print
     print('[uploadClue] gameId=$gameId clueId=$clueId '
         'lat=$lat lng=$lng willWriteLocation=${data.containsKey('location')}');
 
-    // Use merge to be resilient to any subsequent partial writes
     await FirestoreRefs.clues(db, gameId)
         .doc(clueId)
         .set(data, SetOptions(merge: true));
 
     return downloadURL;
+  }
+
+  /// Store the computed game area on the game document.
+  /// This is merge-safe and won’t affect other fields.
+  Future<void> setGameArea({
+    required String gameId,
+    required double centerLat,
+    required double centerLng,
+    required double radiusMeters,
+  }) {
+    final gameRef = FirestoreRefs.gameDoc(db, gameId);
+    final payload = {
+      'centerLat': centerLat,
+      'centerLng': centerLng,
+      'radiusMeters': radiusMeters,
+      'areaComputedAt': FieldValue.serverTimestamp(),
+    };
+
+    // debug
+    // ignore: avoid_print
+    print('[setGameArea] gameId=$gameId '
+        'center=($centerLat,$centerLng) radiusMeters=$radiusMeters');
+
+    return gameRef.set(payload, SetOptions(merge: true));
   }
 }

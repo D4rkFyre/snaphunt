@@ -1,5 +1,6 @@
 // lib/host_screen.dart
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'lobby_screen.dart';
 import 'package:flutter/material.dart';
@@ -142,6 +143,69 @@ class _HostGameScreenState extends State<HostGameScreen> {
     }
   }
 
+  // --- Bounding circle helpers (centroid + max haversine distance) ---
+
+  double _deg2rad(double d) => d * math.pi / 180.0;
+
+  double _haversineMeters({
+    required double lat1,
+    required double lng1,
+    required double lat2,
+    required double lng2,
+  }) {
+    const R = 6371000.0; // Earth radius (m)
+    final dLat = _deg2rad(lat2 - lat1);
+    final dLng = _deg2rad(lng2 - lng1);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_deg2rad(lat1)) *
+            math.cos(_deg2rad(lat2)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return R * c;
+  }
+
+  /// Returns (centerLat, centerLng, radiusMeters) for all clues with GPS.
+  /// Uses simple centroid and max distance to centroid (encloses all points).
+  Map<String, double>? _computeBoundingCircle() {
+    final pts = _clues
+        .where((c) => c.lat != null && c.lng != null)
+        .map((c) => [c.lat!, c.lng!])
+        .toList();
+
+    if (pts.isEmpty) return null;
+
+    // centroid
+    double sumLat = 0, sumLng = 0;
+    for (final p in pts) {
+      sumLat += p[0];
+      sumLng += p[1];
+    }
+    final centerLat = sumLat / pts.length;
+    final centerLng = sumLng / pts.length;
+
+    // radius = max distance to centroid
+    double maxMeters = 0;
+    for (final p in pts) {
+      final d = _haversineMeters(
+        lat1: centerLat,
+        lng1: centerLng,
+        lat2: p[0],
+        lng2: p[1],
+      );
+      if (d > maxMeters) maxMeters = d;
+    }
+
+    // Add a small safety margin (e.g., +15m) to comfortably enclose all
+    final radiusMeters = maxMeters + 15.0;
+
+    return {
+      'centerLat': centerLat,
+      'centerLng': centerLng,
+      'radiusMeters': radiusMeters,
+    };
+  }
+
   Future<void> _createGame() async {
     final raw = _nameCtrl.text.trim();
     final hostName = raw.isEmpty ? 'Host' : raw;
@@ -154,13 +218,13 @@ class _HostGameScreenState extends State<HostGameScreen> {
     try {
       final Game game = await _repo.createGame(hostName: hostName);
 
+      // 1) Upload all clues (with lat/lng)
       for (final clue in _clues) {
         final file = File(clue.xfile.path);
 
-        // 🧪 debug print to confirm values before sending to repo
+        // debug
         // ignore: avoid_print
-        print('[host] uploading clue: lat=${clue.lat}, lng=${clue.lng}, '
-            'path=${clue.xfile.path}');
+        print('[host] uploading clue: lat=${clue.lat}, lng=${clue.lng}, path=${clue.xfile.path}');
 
         await _repo.uploadClue(
           gameId: game.id,
@@ -171,8 +235,24 @@ class _HostGameScreenState extends State<HostGameScreen> {
         );
       }
 
+      // 2) Compute bounding circle from clues that have GPS
+      final area = _computeBoundingCircle();
+      if (area != null) {
+        await _repo.setGameArea(
+          gameId: game.id,
+          centerLat: area['centerLat']!,
+          centerLng: area['centerLng']!,
+          radiusMeters: area['radiusMeters']!,
+        );
+      } else {
+        // debug
+        // ignore: avoid_print
+        print('[host] no GPS on any clue -> game area not written (normal fallback)');
+      }
+
       if (!mounted) return;
 
+      // 3) Navigate to lobby
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => CreateGameLobbyScreen(
