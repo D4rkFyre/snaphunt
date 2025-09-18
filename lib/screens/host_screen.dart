@@ -1,5 +1,7 @@
 // lib/screens/host_screen.dart
+// lib/host_screen.dart
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'lobby_screen.dart';
 import 'package:flutter/material.dart';
@@ -8,11 +10,20 @@ import 'package:image_picker/image_picker.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/models/game_model.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
 
 // One-time tutorial memory
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async' as async; // for async.Completer, Future, etc.
+
+// Keep this TOP-LEVEL (not nested inside a class)
+class _ClueDraft {
+  final XFile xfile;
+  final double? lat;
+  final double? lng;
+  _ClueDraft({required this.xfile, this.lat, this.lng});
+}
 
 class HostGameScreen extends StatefulWidget {
   const HostGameScreen({
@@ -38,7 +49,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
 
   final _nameCtrl = TextEditingController();
   final ImagePicker _picker = ImagePicker();
-  final List<XFile> _clueFiles = [];
+  final List<_ClueDraft> _clues = [];
 
   // Tutorial targets
   final _nickKey = GlobalKey();
@@ -57,7 +68,11 @@ class _HostGameScreenState extends State<HostGameScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeStartTutorial());
+    // Warm up location (optional; improves first-fix speed)
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _tryGetPosition();
+      await _maybeStartTutorial();
+    });
   }
 
   Future<void> _maybeStartTutorial() async {
@@ -80,7 +95,8 @@ class _HostGameScreenState extends State<HostGameScreen> {
       _CoachStep(
         key: _createKey,
         title: 'Create Your Game',
-        text: 'Generate a join code and go to the lobby. Start when players join.',
+        text:
+        'Generate a join code and go to the lobby. Start when players join.',
       ),
     ]);
 
@@ -92,6 +108,104 @@ class _HostGameScreenState extends State<HostGameScreen> {
     _coach?.dispose();
     _nameCtrl.dispose();
     super.dispose();
+  }
+
+  // Stronger location getter: prompts to enable services, longer timeout,
+  // and fallback to last known position.
+  Future<Position?> _tryGetPosition() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      await Geolocator.openLocationSettings();
+      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return null;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) return null;
+    }
+    if (permission == LocationPermission.deniedForever) {
+      return null;
+    }
+
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high, // try .medium indoors
+        timeLimit: const Duration(seconds: 12),
+      );
+      return pos;
+    } catch (_) {
+      try {
+        final last = await Geolocator.getLastKnownPosition();
+        return last;
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  // --- Bounding circle helpers (centroid + max haversine distance) ---
+
+  double _deg2rad(double d) => d * math.pi / 180.0;
+
+  double _haversineMeters({
+    required double lat1,
+    required double lng1,
+    required double lat2,
+    required double lng2,
+  }) {
+    const R = 6371000.0; // Earth radius (m)
+    final dLat = _deg2rad(lat2 - lat1);
+    final dLng = _deg2rad(lng2 - lng1);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_deg2rad(lat1)) *
+            math.cos(_deg2rad(lat2)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return R * c;
+  }
+
+  /// Returns (centerLat, centerLng, radiusMeters) for all clues with GPS.
+  /// Uses simple centroid and max distance to centroid (encloses all points).
+  Map<String, double>? _computeBoundingCircle() {
+    final pts = _clues
+        .where((c) => c.lat != null && c.lng != null)
+        .map((c) => [c.lat!, c.lng!])
+        .toList();
+
+    if (pts.isEmpty) return null;
+
+    // centroid
+    double sumLat = 0, sumLng = 0;
+    for (final p in pts) {
+      sumLat += p[0];
+      sumLng += p[1];
+    }
+    final centerLat = sumLat / pts.length;
+    final centerLng = sumLng / pts.length;
+
+    // radius = max distance to centroid
+    double maxMeters = 0;
+    for (final p in pts) {
+      final d = _haversineMeters(
+        lat1: centerLat,
+        lng1: centerLng,
+        lat2: p[0],
+        lng2: p[1],
+      );
+      if (d > maxMeters) maxMeters = d;
+    }
+
+    // Add a small safety margin (e.g., +15m) to comfortably enclose all
+    final radiusMeters = maxMeters + 15.0;
+
+    return {
+      'centerLat': centerLat,
+      'centerLng': centerLng,
+      'radiusMeters': radiusMeters,
+    };
   }
 
   Future<void> _createGame() async {
@@ -106,17 +220,43 @@ class _HostGameScreenState extends State<HostGameScreen> {
     try {
       final Game game = await _repo.createGame(hostName: hostName);
 
-      for (final x in _clueFiles) {
-        final file = File(x.path);
+      // 1) Upload all clues (with lat/lng)
+      for (final clue in _clues) {
+        final file = File(clue.xfile.path);
+
+        // debug
+        // ignore: avoid_print
+        print(
+            '[host] uploading clue: lat=${clue.lat}, lng=${clue.lng}, path=${clue.xfile.path}');
+
         await _repo.uploadClue(
           gameId: game.id,
           file: file,
           createdBy: hostName,
+          lat: clue.lat,
+          lng: clue.lng,
         );
+      }
+
+      // 2) Compute bounding circle from clues that have GPS
+      final area = _computeBoundingCircle();
+      if (area != null) {
+        await _repo.setGameArea(
+          gameId: game.id,
+          centerLat: area['centerLat']!,
+          centerLng: area['centerLng']!,
+          radiusMeters: area['radiusMeters']!,
+        );
+      } else {
+        // debug
+        // ignore: avoid_print
+        print(
+            '[host] no GPS on any clue -> game area not written (normal fallback)');
       }
 
       if (!mounted) return;
 
+      // 3) Navigate to lobby
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => CreateGameLobbyScreen(
@@ -162,7 +302,10 @@ class _HostGameScreenState extends State<HostGameScreen> {
             children: [
               const Text(
                 'Your Nickname',
-                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
 
@@ -178,14 +321,16 @@ class _HostGameScreenState extends State<HostGameScreen> {
                     hintStyle: const TextStyle(color: Colors.white54),
                     filled: true,
                     fillColor: const Color(0xFF5D4BB2),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 14.0, horizontal: 20.0),
+                    contentPadding: const EdgeInsets.symmetric(
+                        vertical: 14.0, horizontal: 20.0),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(40),
                       borderSide: BorderSide.none,
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(40),
-                      borderSide: const BorderSide(color: Colors.white, width: 1.5),
+                      borderSide:
+                      const BorderSide(color: Colors.white, width: 1.5),
                     ),
                   ),
                 ),
@@ -213,25 +358,57 @@ class _HostGameScreenState extends State<HostGameScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.camera_alt, size: 28, color: Colors.white),
+                      icon: const Icon(Icons.camera_alt,
+                          size: 28, color: Colors.white),
                       onPressed: _busy
                           ? null
                           : () async {
-                        final file = await _picker.pickImage(source: ImageSource.camera);
+                        final file = await _picker.pickImage(
+                            source: ImageSource.camera);
                         if (file != null) {
-                          setState(() => _clueFiles.add(file));
+                          final pos = await _tryGetPosition();
+                          setState(() => _clues.add(_ClueDraft(
+                            xfile: file,
+                            lat: pos?.latitude,
+                            lng: pos?.longitude,
+                          )));
                         }
+                      },
+                      onLongPress: () async {
+                        // Optional: inline debug to inspect status fast
+                        final service =
+                        await Geolocator.isLocationServiceEnabled();
+                        final perm = await Geolocator.checkPermission();
+                        final last =
+                        await Geolocator.getLastKnownPosition().catchError(
+                              (_) => null,
+                        );
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                          duration: const Duration(seconds: 4),
+                          content: Text(
+                              'service=$service perm=$perm last=${last == null ? 'null' : '${last.latitude},${last.longitude}'}'),
+                        ));
                       },
                     ),
                     const SizedBox(width: 24),
                     IconButton(
-                      icon: const Icon(Icons.photo_library, size: 28, color: Colors.white),
+                      icon: const Icon(Icons.photo_library,
+                          size: 28, color: Colors.white),
                       onPressed: _busy
                           ? null
                           : () async {
                         final files = await _picker.pickMultiImage();
                         if (files.isNotEmpty) {
-                          setState(() => _clueFiles.addAll(files));
+                          // One reading for the whole batch (fast)
+                          final pos = await _tryGetPosition();
+                          setState(() {
+                            _clues.addAll(files.map((f) => _ClueDraft(
+                              xfile: f,
+                              lat: pos?.latitude,
+                              lng: pos?.longitude,
+                            )));
+                          });
                         }
                       },
                     ),
@@ -239,18 +416,23 @@ class _HostGameScreenState extends State<HostGameScreen> {
                 ),
               ),
 
-              if (_clueFiles.isNotEmpty) ...[
+              if (_clues.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 Row(
                   children: [
                     const Text(
                       'Selected Clues',
-                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold),
                     ),
                     const Spacer(),
                     TextButton(
-                      onPressed: _busy ? null : () => setState(() => _clueFiles.clear()),
-                      child: const Text("Clear All", style: TextStyle(color: Colors.redAccent)),
+                      onPressed:
+                      _busy ? null : () => setState(() => _clues.clear()),
+                      child: const Text("Clear All",
+                          style: TextStyle(color: Colors.redAccent)),
                     ),
                   ],
                 ),
@@ -259,25 +441,58 @@ class _HostGameScreenState extends State<HostGameScreen> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    for (int i = 0; i < _clueFiles.length; i++)
+                    for (int i = 0; i < _clues.length; i++)
                       Stack(
                         alignment: Alignment.topRight,
                         children: [
                           ClipRRect(
                             borderRadius: BorderRadius.circular(12),
                             child: Image.file(
-                              File(_clueFiles[i].path),
+                              File(_clues[i].xfile.path),
                               width: 80,
                               height: 80,
                               fit: BoxFit.cover,
                             ),
                           ),
+                          // Small GPS badge
+                          Positioned(
+                            left: 4,
+                            bottom: 4,
+                            child: Opacity(
+                              opacity: 0.9,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.black87,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.place,
+                                        size: 12, color: Colors.white),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      (_clues[i].lat != null &&
+                                          _clues[i].lng != null)
+                                          ? '${_clues[i].lat!.toStringAsFixed(3)}, ${_clues[i].lng!.toStringAsFixed(3)}'
+                                          : 'no GPS',
+                                      style: const TextStyle(
+                                          fontSize: 10, color: Colors.white),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
                           GestureDetector(
-                            onTap: () => setState(() => _clueFiles.removeAt(i)),
+                            onTap: () =>
+                                setState(() => _clues.removeAt(i)),
                             child: const CircleAvatar(
                               radius: 12,
                               backgroundColor: Colors.black87,
-                              child: Icon(Icons.close, size: 16, color: Colors.white),
+                              child: Icon(Icons.close,
+                                  size: 16, color: Colors.white),
                             ),
                           ),
                         ],
@@ -308,15 +523,19 @@ class _HostGameScreenState extends State<HostGameScreen> {
               _CoachTarget(
                 key: _createKey,
                 child: ElevatedButton(
-                  onPressed: (_busy || (widget.requireCluesToCreate && _clueFiles.isEmpty))
+                  onPressed:
+                  (_busy || (widget.requireCluesToCreate && _clues.isEmpty))
                       ? null
                       : _createGame,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.greenAccent,
                     foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                    textStyle: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 40, vertical: 20),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(30)),
+                    textStyle: const TextStyle(
+                        fontSize: 24, fontWeight: FontWeight.bold),
                   ),
                   child: const Text("Create Game"),
                 ),
@@ -331,15 +550,18 @@ class _HostGameScreenState extends State<HostGameScreen> {
         onTap: _onItemTapped,
         items: [
           BottomNavigationBarItem(
-            icon: SvgPicture.asset('assets/icons/book.svg', color: const Color(0xFF3E2C8B), width: 28),
+            icon: SvgPicture.asset('assets/icons/book.svg',
+                color: const Color(0xFF3E2C8B), width: 28),
             label: '',
           ),
           BottomNavigationBarItem(
-            icon: SvgPicture.asset('assets/icons/trophy-fill.svg', color: const Color(0xFF3E2C8B), width: 28),
+            icon: SvgPicture.asset('assets/icons/trophy-fill.svg',
+                color: const Color(0xFF3E2C8B), width: 28),
             label: '',
           ),
           BottomNavigationBarItem(
-            icon: SvgPicture.asset('assets/icons/person-circle.svg', color: const Color(0xFF3E2C8B), width: 28),
+            icon: SvgPicture.asset('assets/icons/person-circle.svg',
+                color: const Color(0xFF3E2C8B), width: 28),
             label: '',
           ),
         ],
@@ -394,20 +616,17 @@ class _Coach {
     _entry = OverlayEntry(
       builder: (context) {
         final media = MediaQuery.of(context);
-        // place tooltip under/over the target depending on space
         final spaceBelow = media.size.height - (offset.dy + size.height);
         final tooltipAbove = spaceBelow < 140;
 
         return Stack(
           children: [
-            // dim background
             Positioned.fill(
               child: GestureDetector(
-                onTap: () {}, // absorb taps
+                onTap: () {},
                 child: Container(color: Colors.black54),
               ),
             ),
-            // highlight box (no cutout to keep it simple & stable)
             Positioned(
               left: offset.dx - 6,
               top: offset.dy - 6,
@@ -426,7 +645,8 @@ class _Coach {
             Positioned(
               left: offset.dx.clamp(16.0, media.size.width - 16.0),
               top: tooltipAbove
-                  ? (offset.dy - 16 - 120).clamp(16.0, media.size.height - 136.0)
+                  ? (offset.dy - 16 - 120)
+                  .clamp(16.0, media.size.height - 136.0)
                   : (offset.dy + size.height + 12)
                   .clamp(16.0, media.size.height - 136.0),
               right: 16,
@@ -509,8 +729,8 @@ class _CoachCard extends StatelessWidget {
                       style: TextButton.styleFrom(
                         foregroundColor: Colors.black,
                         backgroundColor: Colors.yellowAccent,
-                        padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 8),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(10)),
                       ),
