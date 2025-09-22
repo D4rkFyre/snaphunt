@@ -486,21 +486,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
                                   color: Colors.black87,
                                   borderRadius: BorderRadius.circular(8),
                                 ),
-                                child: Row(
-                                  children: [
 
-
-
-                                    Text(
-                                      (_clues[i].lat != null &&
-                                          _clues[i].lng != null)
-                                          ? 'R:${radiusDisplay}m'
-                                          : 'Game area not set',
-                                      style: const TextStyle(
-                                          fontSize: 10, color: Colors.white),
-                                    ),
-                                  ],
-                                ),
                               ),
                             ),
                           ),
@@ -547,6 +533,14 @@ class _HostGameScreenState extends State<HostGameScreen> {
                           ),
                         ],
                       ),
+                        Text(
+                        (radiusDisplay != null)
+                        ? 'Game area radius: ${radiusDisplay}m'
+                            : 'Game area not set',
+                        style: const TextStyle(
+                        fontSize: 20, color: Colors.white),
+                        ),
+
                   ],
                 ),
               ],
