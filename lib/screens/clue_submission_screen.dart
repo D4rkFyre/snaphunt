@@ -1,7 +1,11 @@
 // lib/screens/clue_submission_screen.dart
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+
+import 'package:geolocator/geolocator.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/models/clue_model.dart';
@@ -33,6 +37,63 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
     super.initState();
     _repo = widget.repository ?? GameRepository();
   }
+
+  // ---------------------- Location helpers ----------------------
+
+  Future<Position?> _getPlayerPosition() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      // Give the user a chance to enable (non-blocking)
+      await Geolocator.openLocationSettings();
+      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return null;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) return null;
+    }
+    if (permission == LocationPermission.deniedForever) {
+      return null;
+    }
+
+    try {
+      return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 12),
+      );
+    } catch (_) {
+      try {
+        // Fallback is fine for geofence check
+        return await Geolocator.getLastKnownPosition();
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  double _deg2rad(double d) => d * math.pi / 180.0;
+
+  double _haversineMeters({
+    required double lat1,
+    required double lng1,
+    required double lat2,
+    required double lng2,
+  }) {
+    const R = 6371000.0; // meters
+    final dLat = _deg2rad(lat2 - lat1);
+    final dLng = _deg2rad(lng2 - lng1);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_deg2rad(lat1)) *
+            math.cos(_deg2rad(lat2)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return R * c;
+  }
+
+  // ---------------------- Submit flow ----------------------
 
   Future<void> _submit({required String clueId, required String hostUrl}) async {
     final source = await showModalBottomSheet<ImageSource>(
@@ -73,6 +134,85 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
     );
     if (picked == null) return;
 
+    // --------- Game area check BEFORE upload ----------
+    // Read game area from the game doc.
+    double? centerLat, centerLng, radiusMeters;
+    try {
+      final gameSnap =
+      await FirestoreRefs.gameDoc(_repo.db, widget.gameId).get();
+      final data = gameSnap.data();
+      if (data != null) {
+        if (data['centerLat'] != null &&
+            data['centerLng'] != null &&
+            data['radiusMeters'] != null) {
+          centerLat = (data['centerLat'] as num).toDouble();
+          centerLng = (data['centerLng'] as num).toDouble();
+          radiusMeters = (data['radiusMeters'] as num).toDouble();
+        }
+      }
+    } catch (_) {
+      // If read fails, fall through to normal flow (missing data)
+    }
+
+    if (centerLat != null && centerLng != null && radiusMeters != null) {
+      // Area exists → try to get player position and check.
+      final playerPos = await _getPlayerPosition();
+      if (playerPos == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Location unavailable — proceeding without area check.',
+              ),
+            ),
+          );
+        }
+        // Fallback: continue with normal flow (as per requirement)
+      } else {
+        final userLat = playerPos.latitude;
+        final userLng = playerPos.longitude;
+        final dist = _haversineMeters(
+          lat1: userLat,
+          lng1: userLng,
+          lat2: centerLat,
+          lng2: centerLng,
+        );
+
+        // Block if outside radius
+        if (dist > radiusMeters) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                    'You’re outside the game area (${dist.toStringAsFixed(0)}m > ${radiusMeters.toStringAsFixed(0)}m).'),
+                duration: const Duration(seconds: 4),
+              ),
+            );
+          }
+          return; // Do NOT upload
+        } else {
+          // Optional feedback: inside area
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                    'Inside game area (~${dist.toStringAsFixed(0)}m to center)'),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        }
+      }
+    } else {
+      // No area → normal flow
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No game area set — normal submission.')),
+        );
+      }
+    }
+
+    // ---------- Upload flow (unchanged) ----------
     _showUploadingDialog();
     setState(() => _busy = true);
 
@@ -89,6 +229,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Submission uploaded!')),
       );
+
       // Begin scoring via HTTPS Function
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -115,7 +256,10 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
         } catch (_) {}
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(score != null ? 'Scored! ${score!.toStringAsFixed(0)}' : 'Scored!')),
+            SnackBar(
+                content: Text(score != null
+                    ? 'Scored! ${score!.toStringAsFixed(0)}'
+                    : 'Scored!')),
           );
         }
       } catch (e) {
