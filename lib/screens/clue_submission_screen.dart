@@ -1,7 +1,10 @@
 // lib/screens/clue_submission_screen.dart
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/models/clue_model.dart';
@@ -9,8 +12,8 @@ import 'package:snaphunt/services/firestore_refs.dart';
 
 class ClueSubmissionScreen extends StatefulWidget {
   final String gameId;
-  final String playerId;             // deviceId or nickname
-  final GameRepository? repository;  // optional DI for tests
+  final String playerId; // deviceId or nickname
+  final GameRepository? repository; // optional DI for tests
 
   const ClueSubmissionScreen({
     super.key,
@@ -26,7 +29,12 @@ class ClueSubmissionScreen extends StatefulWidget {
 class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
   final ImagePicker _picker = ImagePicker();
   late final GameRepository _repo;
-  bool _busy = false;
+  bool _busy = false; // global uploading flag for UX
+
+  // Track what's been submitted this session (by clueId)
+  final Set<String> _submitted = <String>{};
+  // Store the player's uploaded image URL for thumbnail per clue
+  final Map<String, String> _mySubmissionThumb = <String, String>{};
 
   @override
   void initState() {
@@ -34,7 +42,63 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
     _repo = widget.repository ?? GameRepository();
   }
 
-  Future<void> _submit({required String clueId, required String hostUrl}) async {
+  // ---------------------- Location helpers ----------------------
+  Future<Position?> _getPlayerPosition() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      // Give the user a chance to enable (non-blocking)
+      await Geolocator.openLocationSettings();
+      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return null;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) return null;
+    }
+    if (permission == LocationPermission.deniedForever) {
+      return null;
+    }
+
+    try {
+      return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 12),
+      );
+    } catch (_) {
+      try {
+        // Fallback is fine for geofence check
+        return await Geolocator.getLastKnownPosition();
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  double _deg2rad(double d) => d * math.pi / 180.0;
+  double _haversineMeters({
+    required double lat1,
+    required double lng1,
+    required double lat2,
+    required double lng2,
+  }) {
+    const R = 6371000.0; // meters
+    final dLat = _deg2rad(lat2 - lat1);
+    final dLng = _deg2rad(lng2 - lng1);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_deg2rad(lat1)) * math.cos(_deg2rad(lat2)) *
+            math.sin(dLng / 2) * math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return R * c;
+  }
+
+  // ---------------------- Submit flow ----------------------
+  Future<void> _submit({
+    required String clueId,
+    required String hostUrl,
+  }) async {
+    // Pick source
     final source = await showModalBottomSheet<ImageSource>(
       context: context,
       backgroundColor: const Color(0xFF3E2C8B),
@@ -54,15 +118,14 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
             const Divider(height: 0, color: Colors.white24),
             ListTile(
               leading: const Icon(Icons.photo_camera, color: Colors.white),
-              title: const Text('Take a Photo',
-                  style: TextStyle(color: Colors.white)),
+              title:
+              const Text('Take a Photo', style: TextStyle(color: Colors.white)),
               onTap: () => Navigator.of(ctx).pop(ImageSource.camera),
             ),
           ],
         ),
       ),
     );
-
     if (source == null) return;
 
     final XFile? picked = await _picker.pickImage(
@@ -73,9 +136,85 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
     );
     if (picked == null) return;
 
+    // --------- Game area check BEFORE upload ----------
+    double? centerLat, centerLng, radiusMeters;
+    try {
+      final gameSnap =
+      await FirestoreRefs.gameDoc(_repo.db, widget.gameId).get();
+      final data = gameSnap.data();
+      if (data != null) {
+        if (data['centerLat'] != null &&
+            data['centerLng'] != null &&
+            data['radiusMeters'] != null) {
+          centerLat = (data['centerLat'] as num).toDouble();
+          centerLng = (data['centerLng'] as num).toDouble();
+          radiusMeters = (data['radiusMeters'] as num).toDouble();
+        }
+      }
+    } catch (_) {
+      // If read fails, fall through to normal flow (missing data)
+    }
+
+    if (centerLat != null && centerLng != null && radiusMeters != null) {
+      // Area exists → try to get player position and check.
+      final playerPos = await _getPlayerPosition();
+      if (playerPos == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Location unavailable — proceeding without area check.',
+              ),
+            ),
+          );
+        }
+        // Fallback: continue with normal flow (as per requirement)
+      } else {
+        final userLat = playerPos.latitude;
+        final userLng = playerPos.longitude;
+        final dist = _haversineMeters(
+          lat1: userLat,
+          lng1: userLng,
+          lat2: centerLat,
+          lng2: centerLng,
+        );
+        // Block if outside radius
+        if (dist > radiusMeters) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                    'You’re outside the game area (${dist.toStringAsFixed(0)}m > ${radiusMeters.toStringAsFixed(0)}m).'),
+                duration: const Duration(seconds: 4),
+              ),
+            );
+          }
+          return; // Do NOT upload
+        } else {
+          // Optional feedback: inside area
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                    'Inside game area (~${dist.toStringAsFixed(0)}m to center)'),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        }
+      }
+    } else {
+      // No area → normal flow
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No game area set — normal submission.')),
+        );
+      }
+    }
+
+    // ---------- Upload flow ----------
     _showUploadingDialog();
     setState(() => _busy = true);
-
     try {
       final submission = await _repo.uploadPlayerSubmission(
         gameId: widget.gameId,
@@ -85,16 +224,27 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
       );
 
       if (!mounted) return;
-      Navigator.of(context).pop(); // dismiss uploading dialog
+
+      // Close uploading dialog
+      Navigator.of(context).pop();
+
+      // Mark this clue as submitted and store the image URL for thumbnail
+      setState(() {
+        _submitted.add(clueId);
+        _mySubmissionThumb[clueId] = submission.imageUrl;
+      });
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Submission uploaded!')),
       );
+
       // Begin scoring via HTTPS Function
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Scoring…')),
         );
       }
+
       try {
         await _repo.scoreSubmission(
           gameId: widget.gameId,
@@ -102,10 +252,12 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
           hostUrl: hostUrl,
           playerUrl: submission.imageUrl,
         );
+
         // Try to read score once from Firestore (optional, best-effort).
         double? score;
         try {
-          final snap = await FirestoreRefs.submissions(_repo.db, widget.gameId)
+          final snap = await FirestoreRefs
+              .submissions(_repo.db, widget.gameId)
               .doc(submission.id)
               .get();
           final data = snap.data() as Map<String, dynamic>?;
@@ -113,44 +265,20 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
             score = (data['score'] as num).toDouble();
           }
         } catch (_) {}
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(score != null ? 'Scored! ${score!.toStringAsFixed(0)}' : 'Scored!')),
+            SnackBar(
+              content: Text(score != null
+                  ? 'Scored! ${score!.toStringAsFixed(0)}'
+                  : 'Scored!'),
+            ),
           );
         }
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Scoring failed: $e'),
-              action: SnackBarAction(
-                label: 'RETRY',
-                onPressed: () async {
-                  try {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Scoring…')),
-                    );
-                    await _repo.scoreSubmission(
-                      gameId: widget.gameId,
-                      submissionId: submission.id,
-                      hostUrl: hostUrl,
-                      playerUrl: submission.imageUrl,
-                    );
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Scored!')),
-                      );
-                    }
-                  } catch (e2) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Scoring failed: $e2')),
-                      );
-                    }
-                  }
-                },
-              ),
-            ),
+            SnackBar(content: Text('Scoring failed: $e')),
           );
         }
       }
@@ -177,8 +305,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
   void _openFullScreenNetwork(String url, String heroTag) {
     Navigator.of(context).push(
       PageRouteBuilder(
-        pageBuilder: (_, __, ___) =>
-            _FullScreenPhoto(networkUrl: url, heroTag: heroTag),
+        pageBuilder: (_, __, ___) => _FullScreenPhoto(networkUrl: url, heroTag: heroTag),
         transitionsBuilder: (_, animation, __, child) =>
             FadeTransition(opacity: animation, child: child),
       ),
@@ -192,7 +319,6 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
 
     return Scaffold(
       backgroundColor: darkBg,
-
       // Right-side drawer for profile/settings
       endDrawer: Drawer(
         backgroundColor: darkBg,
@@ -266,6 +392,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
               ),
             );
           }
+
           final clues = snap.data ?? const <Clue>[];
           if (clues.isEmpty) {
             return const Center(
@@ -283,6 +410,8 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
             itemBuilder: (context, index) {
               final clue = clues[index];
               final heroPrompt = 'prompt-${clue.id}';
+              final isSubmitted = _submitted.contains(clue.id);
+              final submittedUrl = _mySubmissionThumb[clue.id];
 
               return Card(
                 color: const Color(0xFF5D4BB2),
@@ -315,23 +444,31 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
                                 ),
                                 loadingBuilder: (context, child, progress) {
                                   if (progress == null) return child;
-                                  return const Center(child: CircularProgressIndicator());
+                                  return const Center(
+                                      child: CircularProgressIndicator());
                                 },
                               ),
                             ),
                           ),
                         ),
                       ),
+
                       const SizedBox(height: 12),
 
-                      // Submit button
+                      // Submit button (disabled after submitted)
                       SizedBox(
                         height: 48,
                         child: ElevatedButton(
-                          onPressed: _busy ? null : () => _submit(clueId: clue.id, hostUrl: clue.imageUrl),
+                          onPressed: (_busy || isSubmitted)
+                              ? null
+                              : () => _submit(
+                            clueId: clue.id,
+                            hostUrl: clue.imageUrl,
+                          ),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                            _busy ? Colors.grey : const Color(0xFFFFC943),
+                            backgroundColor: (_busy || isSubmitted)
+                                ? Colors.grey
+                                : const Color(0xFFFFC943),
                             foregroundColor: Colors.black,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(30),
@@ -341,9 +478,52 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          child: const Text('Submit'),
+                          child: Text(isSubmitted ? 'Submitted' : 'Submit'),
                         ),
                       ),
+
+                      // Player's own uploaded thumbnail (expandable)
+                      if (submittedUrl != null) ...[
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Your submission',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: GestureDetector(
+                            onTap: () => _openFullScreenNetwork(
+                                submittedUrl, 'submission-${clue.id}'),
+                            child: Hero(
+                              tag: 'submission-${clue.id}',
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.network(
+                                  submittedUrl,
+                                  width: 140,
+                                  height: 140,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => const SizedBox(
+                                    width: 140,
+                                    height: 140,
+                                    child: Center(
+                                      child: Text(
+                                        'Preview failed',
+                                        style:
+                                        TextStyle(color: Colors.white70),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -359,7 +539,6 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
 /// Centered uploading popup
 class _UploadingDialog extends StatelessWidget {
   const _UploadingDialog();
-
   @override
   Widget build(BuildContext context) {
     return Dialog(
