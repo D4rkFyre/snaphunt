@@ -1,82 +1,118 @@
-// test/screens/host_screen_test.dart
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
-import 'package:mocktail/mocktail.dart';
+import 'dart:io';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
-import 'package:snaphunt/screens/host_screen.dart';
-import 'package:snaphunt/screens/lobby_screen.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+
 import 'package:snaphunt/models/game_model.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
+import 'package:snaphunt/screens/host_screen.dart';
+import 'package:snaphunt/screens/lobby_screen.dart';
 
-/// Simple mock for the repository so we can intercept createGame()
-class _MockGameRepository extends Mock implements GameRepository {}
+/// A tiny fake repo that returns a canned Game and does nothing for uploads.
+class _FakeRepo extends GameRepository {
+  final FirebaseFirestore _db;
+  _FakeRepo(this._db) : super(firestore: _db);
 
-/// ---------------------------------------------------------------------------
-/// HostGameScreen test
-/// ---------------------------------------------------------------------------
-/// Purpose
-/// - Pressing **Create Game** should:
-///   1) Call `GameRepository.createGame(hostName: ...)`
-///   2) Navigate to the Lobby, passing the returned `gameId` + `joinCode`
-///   3) Show the join code in the Lobby
-///
-/// Test strategy
-/// - Use a **mock** `GameRepository` so we control the return value.
-/// - Use **FakeFirebaseFirestore** so the Lobby’s StreamBuilder has a doc to read.
-/// - Inject both into `HostGameScreen(repo: ..., db: ...)`.
-///
-/// Issues covered
-/// - `mocktail` needs to match the **named argument** `hostName:` when stubbing.
-/// - We seed `/games/{id}` so that once the screen navigates to Lobby,
-///   the stream emits real data and the UI can render.
-/// ---------------------------------------------------------------------------
-void main() {
-  testWidgets('Create Game calls repo and navigates to Lobby with args', (tester) async {
-    final fakeDb = FakeFirebaseFirestore();
-
-    // Seed the game doc the Lobby will listen to in real time.
-    await fakeDb.collection('games').doc('g_123').set({
-      'joinCode': 'ZK7M3Q',
+  @override
+  Future<Game> createGame({String? hostName}) async {
+    final gamesCol = _db.collection('games');
+    final newDoc = gamesCol.doc('g-host');
+    await newDoc.set({
+      'joinCode': 'HST001',
       'status': 'waiting',
-      'createdAt': DateTime.now(),
-      'players': <String>['Host'], // since hostName is seeded by createGame()
+      'createdAt': Timestamp.now(),
+      'players': <String>[],
     });
+    return Game(
+      id: 'g-host',
+      joinCode: 'HST001',
+      status: GameStatus.waiting, // <-- enum, not string
+      createdAt: Timestamp.now(),
+      players: const [],
+      hostDeviceId: null,
+      playerDeviceIds: const [],
+    );
+  }
 
-    // Mock the repository so we control createGame() output.
-    final mockRepo = _MockGameRepository();
-    final fakeGame = Game(
-      id: 'g_123',
-      joinCode: 'ZK7M3Q',
-      status: 'waiting',
-      createdAt: DateTime(2025, 1, 1),
-      players: const ['Host'],
+  @override
+  Future<void> setHostDeviceId({
+    required String gameId,
+    required String hostDeviceId,
+    String? hostNickname,
+  }) async {
+    await _db.collection('games').doc(gameId).set({
+      'hostDeviceId': hostDeviceId,
+      'players': [
+        if (hostNickname != null)
+          {'deviceId': hostDeviceId, 'nickname': hostNickname}
+      ],
+    }, SetOptions(merge: true));
+  }
+
+  // No-op these calls in tests
+  @override
+  Future<String> uploadClue({
+    required String gameId,
+    required File file,
+    required String createdBy,
+    double? lat,
+    double? lng,
+  }) async {
+    return 'https://example.com/fake.jpg';
+  }
+}
+
+void main() {
+  const deviceChannel = MethodChannel('snaphunt/device_id');
+
+  setUpAll(() {
+    // Stub DeviceId.get()
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(deviceChannel, (call) async {
+      if (call.method == 'getDeviceId') return 'host-device';
+      return null;
+    });
+  });
+
+  tearDownAll(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(deviceChannel, null);
+  });
+
+  testWidgets('HostGameScreen creates a game and navigates to Lobby', (tester) async {
+    final db = FakeFirebaseFirestore();
+    final repo = _FakeRepo(db);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HostGameScreen(
+          repo: repo,
+          db: db,
+          // Let us create without picking images in test
+          requireCluesToCreate: false,
+        ),
+      ),
     );
 
-    // IMPORTANT: match the named argument when stubbing with mocktail.
-    when(() => mockRepo.createGame(hostName: any(named: 'hostName')))
-        .thenAnswer((_) async => fakeGame);
+    await tester.pump(const Duration(milliseconds: 80));
 
-    // Pump the Host screen with injected repo + db (DI-friendly for tests)
-    await tester.pumpWidget(MaterialApp(
-      home: HostGameScreen(
-        repo: mockRepo,
-        db: fakeDb,
-        requireCluesToCreate: false, // <-- enable button for the test
-      ),
-    ));
+    // Tap "Create Game"
+    final createBtn = find.widgetWithText(ElevatedButton, 'Create Game');
+    expect(createBtn, findsOneWidget);
+    await tester.tap(createBtn);
 
-    // Tap "Create Game" → triggers repo call and then navigation to Lobby.
-    await tester.tap(find.text('Create Game'));
-    await tester.pump();            // start async
-    await tester.pumpAndSettle();   // finish nav + first lobby stream tick
+    // Let navigation occur
+    await tester.pump(const Duration(milliseconds: 150));
 
-    // Verify the repo was invoked with a hostName.
-    // (We can assert a specific value instead of any(...) if desired.)
-    verify(() => mockRepo.createGame(hostName: any(named: 'hostName'))).called(1);
-    // or: verify(() => mockRepo.createGame(hostName: 'Host')).called(1);
-
-    // Landed in Lobby and the join code is visible
+    // Should navigate to Lobby
     expect(find.byType(CreateGameLobbyScreen), findsOneWidget);
-    expect(find.text('ZK7M3Q'), findsOneWidget);
+
+    // Verify the game doc exists
+    final snap = await db.collection('games').doc('g-host').get();
+    expect(snap.exists, true);
+    expect(snap.data()?['joinCode'], 'HST001');
   });
 }

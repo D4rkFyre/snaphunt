@@ -1,34 +1,24 @@
 // lib/screens/lobby_screen.dart
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
-import 'clue_submission_screen.dart';
 
-/// ---------------------------------------------------------------------------
-/// CreateGameLobbyScreen
-/// ---------------------------------------------------------------------------
-/// Purpose
-/// - Show a **live lobby** for a specific game: who’s joined and the game status.
-/// - Lets the **host** start the game (players only watch).
-/// - When host starts (status -> "active"), **players** auto-navigate to Clues.
-/// ---------------------------------------------------------------------------
 class CreateGameLobbyScreen extends StatefulWidget {
   const CreateGameLobbyScreen({
     super.key,
     required this.gameId,
     required this.joinCode,
     required this.isHost,
-    required this.playerId,
+    required this.playerId, // deviceId for the current device
     this.db,
   });
 
   final String gameId;
   final String joinCode;
   final bool isHost;
-  final String playerId;
+  final String playerId; // deviceId
   final FirebaseFirestore? db;
 
   @override
@@ -36,9 +26,19 @@ class CreateGameLobbyScreen extends StatefulWidget {
 }
 
 class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
-  bool _navigated = false; // ensure we navigate once for joiners
+  late final FirebaseFirestore _db = widget.db ?? FirebaseFirestore.instance;
 
-  FirebaseFirestore get _db => widget.db ?? FirebaseFirestore.instance;
+  Future<void> _startGame() async {
+    final gameRef = FirestoreRefs.gameDoc(_db, widget.gameId);
+    await gameRef.update({'status': 'started'});
+  }
+
+  Future<void> _leaveLobby() async {
+    // For now, just pop back. (If you later want to remove the player from the array,
+    // you can add a repo call that removes `{deviceId: X, nickname: Y}` by merging.)
+    if (!mounted) return;
+    Navigator.of(context).pop();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,10 +48,10 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
       backgroundColor: const Color(0xFF3E2C8B),
       appBar: AppBar(
         title: const Text(
-          "Game Lobby",
+          'Lobby',
           style: TextStyle(
             color: Colors.yellowAccent,
-            fontSize: 32,
+            fontSize: 36,
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -59,178 +59,218 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
         centerTitle: true,
         elevation: 0,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(20.0),
+      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: gameDoc.snapshots(),
+        builder: (context, snap) {
+          if (snap.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snap.hasError) {
+            return Center(
+              child: Text(
+                'Error: ${snap.error}',
+                style: const TextStyle(color: Colors.redAccent),
+                textAlign: TextAlign.center,
+              ),
+            );
+          }
+          if (!snap.hasData || !snap.data!.exists) {
+            return const Center(
+              child: Text(
+                'Game not found.',
+                style: TextStyle(color: Colors.white),
+              ),
+            );
+          }
 
-        // Live subscription: any change to /games/{gameId} re-renders this UI
-        child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-          stream: gameDoc.snapshots(),
-          builder: (context, snap) {
-            if (snap.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (!snap.hasData || !snap.data!.exists) {
-              return const Center(
-                child: Text('Game not found', style: TextStyle(color: Colors.white)),
-              );
-            }
+          final data = snap.data!.data() ?? <String, dynamic>{};
+          final status = (data['status'] as String?) ?? 'waiting';
+          final hostDeviceId = data['hostDeviceId'] as String?;
 
-            final data = snap.data!.data()!;
-            final status = (data['status'] as String?) ?? 'waiting';
-            final players = (data['players'] as List?)?.cast<String>() ?? const <String>[];
+          // Parse players as list of { deviceId, nickname }
+          final rawPlayers = (data['players'] as List?) ?? const [];
+          final playerEntries = rawPlayers
+              .whereType<Map>()
+              .map((m) => (
+          deviceId: (m['deviceId'] as String?) ?? '',
+          nickname: (m['nickname'] as String?) ?? 'Player',
+          ))
+              .toList();
 
-            // -----------------------------------------------------------------
-            // Player (not host) → auto-navigate to Clues when status == "active"
-            // -----------------------------------------------------------------
-            if (!widget.isHost && !_navigated && status == 'active') {
-              _navigated = true; // prevent multiple pushes
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (!mounted) return;
-                Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(
-                    builder: (_) => ClueSubmissionScreen(
-                      gameId: widget.gameId,
-                      playerId: widget.playerId,
-                    ),
-                  ),
-                );
-              });
-            }
+          // Determine host view either from flag or doc (extra safety)
+          final isHostView = widget.isHost || (hostDeviceId == widget.playerId);
 
-            return Column(
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // Join code with copy
+                // Join code card
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFC943),
-                    borderRadius: BorderRadius.circular(30),
+                    color: const Color(0xFF5D4BB2),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.white24, width: 1),
                   ),
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text(
-                        widget.joinCode,
-                        style: const TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF3E2C8B),
+                      const Text(
+                        'Game Code: ',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      GestureDetector(
-                        onTap: () {
-                          Clipboard.setData(ClipboardData(text: widget.joinCode));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text("Game code copied to clipboard!"),
-                              duration: Duration(seconds: 1),
-                            ),
-                          );
-                        },
-                        child: SvgPicture.asset(
-                          'assets/icons/copy.svg',
-                          width: 24,
-                          height: 24,
-                          color: const Color(0xFF3E2C8B),
+                      SelectableText(
+                        widget.joinCode,
+                        style: const TextStyle(
+                          color: Colors.yellowAccent,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.5,
                         ),
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(height: 14),
 
-                const SizedBox(height: 8),
-                Text('gameId: ${widget.gameId} • status: $status',
-                    style: const TextStyle(color: Colors.white70)),
-                const SizedBox(height: 20),
-
-                // Players grid
-                Expanded(
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFC943),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: players.isEmpty
-                        ? const Center(
-                      child: Text(
-                        'Waiting for players…',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF3E2C8B),
-                        ),
-                      ),
-                    )
-                        : GridView.builder(
-                      gridDelegate:
-                      const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 3,
-                        mainAxisSpacing: 20,
-                        crossAxisSpacing: 20,
-                        childAspectRatio: 0.8,
-                      ),
-                      itemCount: players.length,
-                      itemBuilder: (context, index) {
-                        final name = players[index];
-                        return Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            SvgPicture.asset(
-                              'assets/icons/person-circle.svg',
-                              width: 50,
-                              height: 50,
-                              color: const Color(0xFF3E2C8B),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              name,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF3E2C8B),
-                              ),
-                            ),
-                          ],
-                        );
-                      },
+                // Status badge
+                Container(
+                  padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: status == 'waiting'
+                        ? Colors.orangeAccent
+                        : Colors.greenAccent,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    status == 'waiting' ? 'Waiting for players' : 'Started',
+                    style: const TextStyle(
+                      color: Colors.black87,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: 18),
 
-                // Host-only Start Game button
-                if (widget.isHost)
-                  ElevatedButton(
-                    onPressed: status == 'waiting'
-                        ? () async {
-                      try {
-                        await gameDoc.update({'status': 'active'});
-                        // Host stays on lobby or navigate host elsewhere if you prefer
-                      } catch (e) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Failed to start game: $e')),
-                        );
-                      }
-                    }
-                        : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.greenAccent,
-                      foregroundColor: Colors.black,
-                      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                      textStyle: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                // Players header
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Players (${playerEntries.length})',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
                     ),
-                    child: const Text("Start Game"),
                   ),
+                ),
+                const SizedBox(height: 12),
+
+                // Players grid or "waiting"
+                Expanded(
+                  child: playerEntries.isEmpty
+                      ? const Center(
+                    child: Text(
+                      'Waiting for players…',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFFCFCCF1),
+                      ),
+                    ),
+                  )
+                      : GridView.builder(
+                    gridDelegate:
+                    const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 3,
+                      mainAxisSpacing: 20,
+                      crossAxisSpacing: 20,
+                      childAspectRatio: 0.8,
+                    ),
+                    itemCount: playerEntries.length,
+                    itemBuilder: (context, index) {
+                      final entry = playerEntries[index];
+                      final isMe = entry.deviceId == widget.playerId;
+                      final display = isMe
+                          ? '${entry.nickname} (you)'
+                          : entry.nickname;
+
+                      return Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SvgPicture.asset(
+                            'assets/icons/person-circle.svg',
+                            width: 50,
+                            height: 50,
+                            color: const Color(0xFFCFCCF1),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            display,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // Host actions
+                if (isHostView && status == 'waiting')
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _startGame,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.greenAccent,
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      child: const Text('Start Game'),
+                    ),
+                  ),
+
+                // Leave button (all roles)
+                const SizedBox(height: 10),
+                TextButton(
+                  onPressed: _leaveLobby,
+                  child: const Text(
+                    'Leave Lobby',
+                    style: TextStyle(
+                      color: Colors.yellowAccent,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
               ],
-            );
-          },
-        ),
+            ),
+          );
+        },
       ),
     );
   }

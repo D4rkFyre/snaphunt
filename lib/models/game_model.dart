@@ -1,97 +1,157 @@
 // lib/models/game_model.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// ---------------------------------------------------------------------------
-/// Game (data model)
-/// ---------------------------------------------------------------------------
-/// Purpose
-/// - In-memory representation of a Firestore document at `/games/{gameId}`.
-/// - Keeps types consistent and conversions (to/from Firestore) in one place.
-///
-/// Fields (current milestone)
-/// - `id`        : Firestore document id (auto-generated on create)
-/// - `joinCode`  : 6-char human code (e.g., "ABCD23")
-/// - `status`    : "waiting" | "active" | "ended"
-/// - `createdAt` : When the game was created (DateTime in app)
-/// - `players`   : List of **nicknames** currently in the lobby
-///
-/// Notes
-/// - Firestore stores `createdAt` as a `Timestamp`. We convert to/from `DateTime`.
-/// - Today `players` is a simple list of strings (nicknames). In the future,
-///   we can upgrade this to richer player objects (uid + name) or a subcollection.
-/// ---------------------------------------------------------------------------
-class Game {
-  final String id;            // Firestore doc id
-  final String joinCode;      // e.g., "ABCD23"
-  final String status;        // "waiting" | "active" | "ended"
-  final DateTime createdAt;   // when the game was created
-  final List<String> players; // lobby display names (nicknames)
+/// -------------------------------
+/// Game status (domain-level)
+/// -------------------------------
+enum GameStatus { waiting, started, finished }
 
-  Game({
+extension GameStatusX on GameStatus {
+  String get asString {
+    switch (this) {
+      case GameStatus.waiting:
+        return 'waiting';
+      case GameStatus.started:
+        return 'started';
+      case GameStatus.finished:
+        return 'finished';
+    }
+  }
+
+  static GameStatus fromString(String? raw) {
+    // Back-compat + typo tolerance
+    switch (raw) {
+      case 'waiting':
+        return GameStatus.waiting;
+      case 'started':
+      case 'active': // legacy alias
+        return GameStatus.started;
+      case 'finished':
+      case 'completed': // legacy alias
+        return GameStatus.finished;
+      default:
+        return GameStatus.waiting;
+    }
+  }
+}
+
+/// -------------------------------
+/// Player entry
+/// -------------------------------
+class PlayerEntry {
+  final String deviceId; // may be empty on legacy docs
+  final String nickname;
+
+  const PlayerEntry({required this.deviceId, required this.nickname});
+
+  Map<String, dynamic> toMap() => {
+    'deviceId': deviceId,
+    'nickname': nickname,
+  };
+
+  factory PlayerEntry.fromMap(dynamic raw) {
+    // Back-compat: if legacy string nickname, map deviceId -> ""
+    if (raw is String) {
+      return PlayerEntry(deviceId: "", nickname: raw);
+    }
+    if (raw is Map<String, dynamic>) {
+      return PlayerEntry(
+        deviceId: (raw['deviceId'] as String?) ?? "",
+        nickname: (raw['nickname'] as String?) ?? "",
+      );
+    }
+    // Fallback to empty entry to avoid crashes
+    return const PlayerEntry(deviceId: "", nickname: "");
+  }
+}
+
+/// -------------------------------
+/// Game model
+/// -------------------------------
+class Game {
+  final String id;
+  final String joinCode;
+  final GameStatus status;            // enum in-memory
+  final Timestamp createdAt;
+
+  /// Persistence / enforcement
+  final String? hostDeviceId;         // null on legacy docs
+  final List<String> playerDeviceIds; // [] on legacy docs
+  final List<PlayerEntry> players;    // [{deviceId, nickname}] or legacy strings -> converted
+
+  const Game({
     required this.id,
     required this.joinCode,
     required this.status,
     required this.createdAt,
-    required this.players,
+    this.hostDeviceId,
+    this.playerDeviceIds = const [],
+    this.players = const [],
   });
 
-  /// Return a new Game with any subset of fields changed.
   Game copyWith({
     String? id,
     String? joinCode,
-    String? status,
-    DateTime? createdAt,
-    List<String>? players,
+    GameStatus? status,
+    Timestamp? createdAt,
+    String? hostDeviceId,
+    List<String>? playerDeviceIds,
+    List<PlayerEntry>? players,
   }) {
     return Game(
       id: id ?? this.id,
       joinCode: joinCode ?? this.joinCode,
       status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
+      hostDeviceId: hostDeviceId ?? this.hostDeviceId,
+      playerDeviceIds: playerDeviceIds ?? this.playerDeviceIds,
       players: players ?? this.players,
     );
   }
 
-  /// Convert this model into a plain map for Firestore **writes**.
-  ///
-  /// Important:
-  /// - When creating a game, we usually let Firestore set `createdAt`
-  ///   with `FieldValue.serverTimestamp()` inside the repository/transaction.
-  ///   This `toJson()` is handy for updates or non-transactional writes.
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toMap() {
     return {
       'joinCode': joinCode,
-      'status': status,
-      'createdAt': Timestamp.fromDate(createdAt),
-      'players': players,
+      'status': status.asString, // write as string for Firestore
+      'createdAt': createdAt,
+      // NEW fields (only include if present to keep writes minimal)
+      if (hostDeviceId != null) 'hostDeviceId': hostDeviceId,
+      'playerDeviceIds': playerDeviceIds,
+      'players': players.map((p) => p.toMap()).toList(),
     };
   }
 
-  /// Build a `Game` from a typed Firestore snapshot at `/games/{gameId}`.
-  ///
-  /// Assumes the document exists and has all expected fields.
-  /// If you need extra safety (e.g., missing fields early in lifecycle),
-  /// add null-checks/defaults here.
-  factory Game.fromSnapshot(DocumentSnapshot<Map<String, dynamic>> snap) {
-    final d = snap.data()!;
-    return Game(
-      id: snap.id,
-      joinCode: d['joinCode'] as String,
-      status: d['status'] as String,
-      createdAt: (d['createdAt'] as Timestamp).toDate(),
-      players: (d['players'] as List<dynamic>).cast<String>(),
-    );
-  }
+  factory Game.fromMap(String id, Map<String, dynamic> data) {
+    final createdAt = data['createdAt'];
+    final rawPlayers = data['players'];
 
-  /// Construct from a `{...}` map when we already know the `id`.
-  /// Useful with manual queries or when using `withConverter` in a custom way.
-  factory Game.fromMap(String id, Map<String, dynamic> d) {
+    // Parse players with back-compat support
+    final parsedPlayers = <PlayerEntry>[];
+    if (rawPlayers is List) {
+      for (final e in rawPlayers) {
+        parsedPlayers.add(PlayerEntry.fromMap(e));
+      }
+    }
+
+    // Parse playerDeviceIds with a safe fallback
+    final pdevIdsRaw = data['playerDeviceIds'];
+    final parsedDeviceIds = <String>[];
+    if (pdevIdsRaw is List) {
+      for (final e in pdevIdsRaw) {
+        if (e is String) parsedDeviceIds.add(e);
+      }
+    }
+
+    final statusStr = (data['status'] as String?) ?? 'waiting';
+
     return Game(
       id: id,
-      joinCode: d['joinCode'] as String,
-      status: d['status'] as String,
-      createdAt: (d['createdAt'] as Timestamp).toDate(),
-      players: (d['players'] as List<dynamic>).cast<String>(),
+      joinCode: (data['joinCode'] as String?) ?? '',
+      status: GameStatusX.fromString(statusStr),
+      createdAt: createdAt is Timestamp ? createdAt : Timestamp.now(),
+      hostDeviceId: data['hostDeviceId'] as String?, // null on legacy
+      playerDeviceIds: parsedDeviceIds,
+      players: parsedPlayers,
     );
   }
 }

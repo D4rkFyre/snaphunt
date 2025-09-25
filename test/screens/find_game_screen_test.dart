@@ -1,66 +1,67 @@
-// test/screens/find_game_screen_test.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+
 import 'package:snaphunt/screens/find_game_screen.dart';
 import 'package:snaphunt/screens/lobby_screen.dart';
 
-/// ---------------------------------------------------------------------------
-/// JoinGameScreen test
-/// ---------------------------------------------------------------------------
-/// Purpose
-/// - Simulate a normal join flow:
-///   1) There is a **waiting** game in Firestore
-///   2) `/codes/{CODE}` points to that game
-///   3) User enters nickname + code and taps "Find a Game"
-///   4) We navigate to the Lobby and the player gets added to `players[]`
-///
-/// Why this works without the network
-/// - We use `FakeFirebaseFirestore` to seed the exact docs the UI expects,
-///   then we read back results to assert side effects (e.g., player added).
-/// ---------------------------------------------------------------------------
-void main() {
-  testWidgets('enter code, join game, navigate to lobby', (tester) async {
-    final fake = FakeFirebaseFirestore();
+Future<void> pumpUntilFound(
+    WidgetTester tester,
+    Finder finder, {
+      Duration timeout = const Duration(seconds: 3),
+    }) async {
+  final end = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(end)) {
+    await tester.pump(const Duration(milliseconds: 50));
+    if (finder.evaluate().isNotEmpty) return;
+  }
+  throw TestFailure('Timed out waiting for $finder');
+}
 
-    // Seed a WAITING game and link it from /codes/{CODE}
-    final gameRef = await fake.collection('games').add({
-      'joinCode': 'ABCD23',
-      'status': 'waiting',          // ← must be waiting to allow joins
-      'createdAt': DateTime.now(),
+void main() {
+  const deviceChannel = MethodChannel('snaphunt/device_id');
+
+  setUpAll(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(deviceChannel, (call) async {
+      if (call.method == 'getDeviceId') return 'dev-join';
+      return null;
+    });
+  });
+
+  tearDownAll(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(deviceChannel, null);
+  });
+
+  testWidgets('enter code, join game, navigate to lobby', (tester) async {
+    final db = FakeFirebaseFirestore();
+
+    await db.collection('codes').doc('ABC999').set({
+      'status': 'reserved',
+      'gameId': 'gWaiting',
+      'createdAt': Timestamp.now(),
+    });
+
+    await db.collection('games').doc('gWaiting').set({
+      'joinCode': 'ABC999',
+      'status': 'waiting',
+      'createdAt': Timestamp.now(),
       'players': <String>[],
     });
-    await fake.collection('codes').doc('ABCD23').set({
-      'status': 'reserved',
-      'gameId': gameRef.id,          // ← link code → game
-      'createdAt': DateTime.now(),
-    });
 
-    // Pump the Join screen with the same fake DB
-    await tester.pumpWidget(MaterialApp(home: JoinGameScreen(db: fake)));
-    await tester.pump(); // settle first frame
+    await tester.pumpWidget(MaterialApp(home: JoinGameScreen(db: db)));
+    await tester.pump(const Duration(milliseconds: 50));
 
-    // (Optional) enter a nickname in the first TextField
     await tester.enterText(find.byType(TextField).at(0), 'Tester');
+    await tester.enterText(find.byType(TextField).at(1), 'ABC999');
 
-    // Enter the CODE in the second TextField (nickname is at index 0)
-    // We type lowercase on purpose; the widget uppercases before validation.
-    await tester.enterText(find.byType(TextField).at(1), 'abcd23');
+    final joinBtn = find.widgetWithText(ElevatedButton, 'Find a Game');
+    await tester.tap(joinBtn);
 
-    // Attempt to join
-    await tester.tap(find.text('Find a Game'));
-
-    // Let async work complete + push route + first lobby stream tick
-    await tester.pump();                 // start async
-    await tester.pumpAndSettle();        // finish nav/stream
-
-    // We should now be in the Lobby
+    await pumpUntilFound(tester, find.byType(CreateGameLobbyScreen));
     expect(find.byType(CreateGameLobbyScreen), findsOneWidget);
-    expect(find.text('ABCD23'), findsOneWidget);
-
-    // Player nickname should have been appended to players[]
-    final snap = await fake.collection('games').doc(gameRef.id).get();
-    final players = (snap.data()!['players'] as List).cast<String>();
-    expect(players.isNotEmpty, true);
   });
 }

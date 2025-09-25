@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/services/join_code.dart';
+import 'package:snaphunt/services/device_id.dart';
+import 'package:snaphunt/repositories/game_repository.dart';
 
 /// ---------------------------------------------------------------------------
 /// JoinGameScreen
@@ -16,15 +17,18 @@ import 'package:snaphunt/services/join_code.dart';
 /// How it works (step-by-step)
 /// 1) Player types nickname (optional; we default to "Player ####").
 /// 2) Player types 6-char code (A–Z + 2–9). We validate the format locally.
-/// 3) We look up `/codes/{CODE}` to find `gameId`.
-/// 4) We fetch `/games/{gameId}` and require `status == "waiting"`.
-/// 5) We add the nickname to `/games/{gameId}.players` (arrayUnion).
-/// 6) Navigate to **Lobby** with `isHost: false`.
+/// 3) We call GameRepository.joinGameByCode(...) which:
+///    - resolves `/codes/{CODE}` → gameId,
+///    - ensures the game is joinable,
+///    - enforces device-based role rules,
+///    - writes `{deviceId, nickname}` and `playerDeviceIds`.
+/// 4) Navigate to **Lobby** with `isHost: false`.
 ///
 /// Error states we surface to the user:
 /// - "Enter a valid 6-character code (A–Z, 2–9)."
 /// - "No game found." (bad code or missing/invalid link)
 /// - "Game already started." (status != "waiting")
+/// - "You are the host on this device and cannot join as a player."
 ///
 /// Testing
 /// - `db` can be injected; tests pass a FakeFirebaseFirestore.
@@ -51,9 +55,26 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
   // Firestore handle (real in app, fake in tests)
   late final FirebaseFirestore _db = widget.db ?? FirebaseFirestore.instance;
 
+  // Repository (logic layer)
+  late final GameRepository _repo = GameRepository(firestore: _db);
+
   // Simple UI state
   bool _busy = false;
   String? _error;
+
+  // Device identity cache
+  String? _deviceId;
+  Future<void> _loadDeviceId() async {
+    final id = await DeviceId.get();
+    if (!mounted) return;
+    setState(() => _deviceId = id);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDeviceId(); // fetch and cache device identity
+  }
 
   @override
   void dispose() {
@@ -64,18 +85,7 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
 
   void _onItemTapped(int index) => setState(() => _selectedIndex = index);
 
-  /// Try to join a game by code.
-  ///
-  /// Validation:
-  /// - Code must be 6 chars, uppercase A–Z and digits 2–9 (see JoinCode.isValid).
-  ///
-  /// Firestore reads/writes:
-  /// - READ  `/codes/{CODE}`  → get `gameId`
-  /// - READ  `/games/{gameId}`→ ensure `status == "waiting"`
-  /// - WRITE `/games/{gameId}`→ `players: arrayUnion([nickname])`
-  ///
-  /// Navigation:
-  /// - On success → push Lobby screen with `isHost: false`.
+  /// Try to join a game by code using the repository (atomic + role-enforced).
   Future<void> _join() async {
     // Close the keyboard for a clean transition
     FocusScope.of(context).unfocus();
@@ -102,48 +112,27 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
     });
 
     try {
-      // Step 1: code → gameId
-      final codeSnap = await FirestoreRefs.codeDoc(_db, code).get();
-      if (!codeSnap.exists) {
-        // Either a bad code or not reserved/created yet
-        throw StateError('No game found.');
-      }
-      final codeData = codeSnap.data()!;
-      final gameId = codeData['gameId'] as String?;
-      if (gameId == null || gameId.isEmpty) {
-        // Defensive: if code doc exists but is missing the link
-        throw StateError('No game found.');
-      }
+      // Ensure we have a device identity for this session
+      final deviceId = _deviceId ?? await DeviceId.get();
 
-      // Step 2: ensure the game exists and is still joinable
-      final gameRef = FirestoreRefs.gameDoc(_db, gameId);
-      final gameSnap = await gameRef.get();
-      if (!gameSnap.exists) {
-        throw StateError('No game found.');
-      }
-      final status = (gameSnap.data()!['status'] as String?) ?? 'waiting';
-      if (status != 'waiting') {
-        // Host already started the game; block late joins
-        throw StateError('Game already started.');
-      }
-
-      // Step 3: add this player’s nickname atomically
-      // arrayUnion prevents dupes and avoids race conditions.
-      await gameRef.update({
-        'players': FieldValue.arrayUnion([playerName]),
-      });
+      // Atomic join with role enforcement + persistence fields
+      final (gameId, resolvedCode) = await _repo.joinGameByCode(
+        code: code,
+        deviceId: deviceId,
+        nickname: playerName,
+      );
 
       if (!mounted) return;  // user navigated away mid-join
 
-      // Step 4: success → go to the live Lobby view as a player (no Start button)
+      // Success → go to the live Lobby view as a player (no Start button)
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => CreateGameLobbyScreen(
             gameId: gameId,
-            joinCode: code,
-            isHost: false,     // player view → no Start Game button
-            playerId: playerName, // <-- pass nickname through
-            db: _db,           // pass the same Firestore instance for consistency/tests
+            joinCode: resolvedCode,
+            isHost: false,      // player view → no Start Game button
+            playerId: deviceId, // device identity is the true playerId
+            db: _db,            // pass the same Firestore instance for consistency/tests
           ),
         ),
       );
@@ -182,7 +171,7 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // 1) Nickname input (stored in the game's players[] on success)
+              // 1) Nickname input
               const Text(
                 'Your Nickname',
                 style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),

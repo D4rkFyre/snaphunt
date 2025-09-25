@@ -1,32 +1,44 @@
-// test/screens/home_screen_test.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+
 import 'package:snaphunt/screens/home_screen.dart';
 
-/// ---------------------------------------------------------------------------
-/// HomeScreen smoke test
-/// ---------------------------------------------------------------------------
-/// Purpose
-/// - Ensure the Home screen renders without errors and shows a bottom
-///   navigation bar with exactly 3 items (icons only).
-///
-/// Why this matters
-/// - This is a lightweight “does it boot?” check for the landing page.
-/// - We don’t assert labels or icons here—just the presence and count of items,
-///   so the test won’t break if we swap artwork later.
-/// ---------------------------------------------------------------------------
 void main() {
+  const deviceChannel = MethodChannel('snaphunt/device_id');
+
+  setUpAll(() {
+    // Stub device id (HomeScreen initState -> rejoin prompt path)
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(deviceChannel, (call) async {
+      if (call.method == 'getDeviceId') return 'test-device';
+      return null;
+    });
+  });
+
+  tearDownAll(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(deviceChannel, null);
+  });
+
   testWidgets('Home renders and has a 3-item bottom nav', (tester) async {
-    // Pump the Home screen in a MaterialApp shell (gives us theme + Navigator)
+    // Set large surface INSIDE the test (avoids inTest assertion)
+    await tester.binding.setSurfaceSize(const Size(800, 1400));
+
     await tester.pumpWidget(const MaterialApp(home: HomeScreen()));
-    await tester.pump();   // settle the first frame
+    // Let post-frame callback run once
+    await tester.pump(const Duration(milliseconds: 100));
 
-    // Home should render and include a BottomNavigationBar
-    final navFinder = find.byType(BottomNavigationBar);
-    expect(navFinder, findsOneWidget);
+    expect(find.text('Snaphunt'), findsOneWidget);
+    expect(find.text('Host'), findsOneWidget);
+    expect(find.text('Join'), findsOneWidget);
 
-    // Read the widget to assert item count (robust against icon/label changes)
-    final nav = tester.widget<BottomNavigationBar>(navFinder);
-    expect(nav.items.length, 3);
+    final bar = tester.widget<BottomNavigationBar>(
+      find.byType(BottomNavigationBar),
+    );
+    expect(bar.items.length, 3);
+
+    // Reset surface
+    await tester.binding.setSurfaceSize(null);
   });
 }

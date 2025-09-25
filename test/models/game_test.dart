@@ -12,51 +12,42 @@ import 'package:snaphunt/models/game_model.dart';
 ///   `Timestamp` to simulate what real docs look like.
 /// ---------------------------------------------------------------------------
 void main() {
-  test('Game.toJson produces Firestore-friendly map', () {
-    // Given a Game instance in memory
-    final now = DateTime.now();
+  test('Game.toMap produces Firestore-friendly map with enum-backed status', () {
+    final ts = Timestamp.fromMillisecondsSinceEpoch(1711111111111);
+
     final g = Game(
-      id: 'abc123',          // doc id (not included in toJson)
-      joinCode: 'A1B2C3',
-      status: 'waiting',
-      createdAt: now,        // will be converted to Timestamp
+      id: 'doc123',
+      joinCode: 'Z9Y8X7',
+      status: GameStatus.waiting,
+      createdAt: ts,
       players: const [],
     );
 
-    // When we serialize it for Firestore writes
-    final json = g.toJson();
+    final map = g.toMap();
 
-    // Then the shape and types should match what Firestore expects
-    expect(json['joinCode'], 'A1B2C3');
-    expect(json['status'], 'waiting');
-    expect(json['players'], isA<List<dynamic>>());
-    expect(json['createdAt'], isA<Timestamp>());
-
-    // Allow small clock drift between DateTime.now() and conversion
-    expect(
-      (json['createdAt'] as Timestamp).toDate().millisecondsSinceEpoch,
-      closeTo(now.millisecondsSinceEpoch, 1000),  // within 1s
-    );
+    expect(map['joinCode'], 'Z9Y8X7');
+    expect(map['status'], GameStatus.waiting.asString);
+    expect(map['createdAt'], ts);
+    expect(map['players'], isA<List>());
+    expect((map['players'] as List), isEmpty);
   });
 
-  test('Game.fromMap parses fields correctly', () {
-    // Given a map that looks like a Firestore document
-    final ts = Timestamp.fromDate(DateTime.utc(2025, 1, 2, 3, 4, 5));
-    final map = {
+  test('Game.fromMap parses map (legacy baseline)', () {
+    final ts = Timestamp.fromMillisecondsSinceEpoch(1712222222222);
+    final map = <String, dynamic>{
       'joinCode': 'Z9Y8X7',
       'status': 'waiting',
-      'createdAt': ts,         // Firestore stores timestamps as `Timestamp`
+      'createdAt': ts,
+      // legacy players format
       'players': <String>[],
     };
 
-    // When we build a Game from it (and supply a known id)
     final g = Game.fromMap('doc123', map);
 
-    // Then all fields should be parsed and typed properly
     expect(g.id, 'doc123');
     expect(g.joinCode, 'Z9Y8X7');
-    expect(g.status, 'waiting');
-    expect(g.createdAt, ts.toDate());   // converted back to DateTime
+    expect(g.status, GameStatus.waiting);
+    expect(g.createdAt, ts);
     expect(g.players, isEmpty);
   });
 }

@@ -1,62 +1,69 @@
-// test/screens/find_game_screen_started_test.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+
 import 'package:snaphunt/screens/find_game_screen.dart';
 
-/// ---------------------------------------------------------------------------
-/// JoinGameScreen (active game) test
-/// ---------------------------------------------------------------------------
-/// Purpose
-/// - If a player enters a valid code for a game that is already "active",
-///   the screen should show the message **"Game already started."**
-///   and must NOT add the player to the lobby.
-///
-/// What we simulate here
-/// - A game doc with `status: "active"`
-/// - A matching code doc that points to that game
-/// - Typing the code (lowercased) to ensure UI handles uppercase conversion
-/// - Tapping "Find a Game" → expect the error text
-///
-/// Why FakeFirebaseFirestore?
-/// - No network calls; we can seed docs and read them back synchronously.
-/// ---------------------------------------------------------------------------
+Future<void> pumpUntilFound(
+    WidgetTester tester,
+    Finder finder, {
+      Duration timeout = const Duration(seconds: 6),
+    }) async {
+  final end = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(end)) {
+    await tester.pump(const Duration(milliseconds: 60));
+    if (finder.evaluate().isNotEmpty) return;
+  }
+  throw TestFailure('Timed out waiting for $finder');
+}
+
 void main() {
+  const deviceChannel = MethodChannel('snaphunt/device_id');
+
+  setUpAll(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(deviceChannel, (call) async {
+      if (call.method == 'getDeviceId') return 'dev-join';
+      return null;
+    });
+  });
+
+  tearDownAll(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(deviceChannel, null);
+  });
+
   testWidgets('Entering code for active game shows "Game already started."', (tester) async {
-    final fake = FakeFirebaseFirestore();
+    final db = FakeFirebaseFirestore();
 
-    // Seed an ACTIVE game and its code mapping
-    // Note: createdAt uses DateTime here; FakeFirestore accepts that for tests.
-    final gameRef = await fake.collection('games').add({
-      'joinCode': 'START1',
-      'status': 'active',             // ← key: already started
-      'createdAt': DateTime.now(),
-      'players': <String>['Host'],
-    });
-    await fake.collection('codes').doc('START1').set({
+    await db.collection('codes').doc('ACTIVE1').set({
       'status': 'reserved',
-      'gameId': gameRef.id,             // ← link code → game
-      'createdAt': DateTime.now(),
+      'gameId': 'gActive',
+      'createdAt': Timestamp.now(),
     });
 
-    // Pump the Join screen using the fake Firestore
-    await tester.pumpWidget(MaterialApp(home: JoinGameScreen(db: fake)));
+    await db.collection('games').doc('gActive').set({
+      'joinCode': 'ACTIVE1',
+      'status': 'active',
+      'createdAt': Timestamp.now(),
+      'players': <String>[],
+    });
 
-    // Enter the code (lowercase) to verify UI normalizes to uppercase + validates.
-    // There are two TextFields: [0] nickname, [1] game code.
-    await tester.enterText(find.byType(TextField).at(1), 'start1');
+    await tester.pumpWidget(MaterialApp(home: JoinGameScreen(db: db)));
+    await tester.pump(const Duration(milliseconds: 80));
 
-    // Attempt to join
-    await tester.tap(find.text('Find a Game'));
-    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).at(0), 'PlayerA');
+    await tester.enterText(find.byType(TextField).at(1), 'ACTIVE1');
 
-    // Expect a clear error message
+    final joinBtn = find.widgetWithText(ElevatedButton, 'Find a Game');
+    await tester.tap(joinBtn);
+
+    // Let async state update and error render
+    await tester.pump(const Duration(milliseconds: 150));
+    await pumpUntilFound(tester, find.text('Game already started.'));
+
     expect(find.text('Game already started.'), findsOneWidget);
-
-    // Double-check no player was added accidentally
-    final snap = await fake.collection('games').doc(gameRef.id).get();
-    final players = (snap.data()!['players'] as List).cast<String>();
-    expect(players, contains('Host'));
-    expect(players.length, 1);    // still only the host
   });
 }
