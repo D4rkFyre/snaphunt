@@ -127,7 +127,7 @@ class GameRepository {
     const maxAttempts = 10;
 
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      final code = JoinCode.generate();
+      final code = JoinCode.generate().toUpperCase();
 
       try {
         final game = await db.runTransaction<Game>((tx) async {
@@ -157,7 +157,6 @@ class GameRepository {
             'status': GameStatus.waiting.asString,
             'createdAt': FieldValue.serverTimestamp(),
             // Keep legacy-friendly players list (strings) so old UIs/tests still work.
-            // Lobby now tolerates both shapes.
             'players': hostName == null ? <String>[] : <String>[hostName],
             // hostDeviceId/playerDeviceIds will be set later (setHostDeviceId / joins)
           });
@@ -246,46 +245,86 @@ class GameRepository {
         .map((qs) => qs.docs.map((d) => Clue.fromSnapshot(d)).toList());
   }
 
-  /// Upload a player's submission image and create a submission doc.
-  /// Storage: games/{gameId}/submissions/{submissionId}.jpg
-  /// Firestore: /games/{gameId}/submissions/{submissionId}
+  // === Helpers for deterministic IDs ==================================
+
+  /// Sanitize a string to be safe in Firestore doc IDs and Storage paths.
+  String _safeIdPart(String s) =>
+      s.replaceAll(RegExp(r'[^A-Za-z0-9_\-]'), '_');
+
+  /// Deterministic submission ID per (playerId, clueId).
+  String _submissionIdFor(String playerId, String clueId) =>
+      '${_safeIdPart(playerId)}__${_safeIdPart(clueId)}';
+
+  DateTime? _asDateTime(dynamic v) {
+    if (v is Timestamp) return v.toDate();
+    if (v is DateTime) return v;
+    return null;
+  }
+
+  /// Upload a player's submission image and create a submission doc **once**
+  /// per (playerId, clueId). Includes imageUrl on CREATE to satisfy rules.
   Future<Submission> uploadPlayerSubmission({
     required String gameId,
     required String clueId,
     required String playerId, // deviceId or nickname
     required File imageFile,
   }) async {
-    final submissionId = const Uuid().v4();
+    final submissionId = _submissionIdFor(playerId, clueId);
+    final subRef = FirestoreRefs.submissions(db, gameId).doc(submissionId);
 
-    // 1) Upload image to Storage
+    // If it already exists, just return it (prevents duplicates after rejoin)
+    final existing = await subRef.get();
+    if (existing.exists) {
+      final m = existing.data()!;
+      return Submission(
+        id: submissionId,
+        gameId: gameId,
+        clueId: clueId,
+        playerId: playerId,
+        imageUrl: (m['imageUrl'] as String?) ?? '',
+        status: (m['status'] as String?) ?? 'pending',
+        createdAt: _asDateTime(m['createdAt']),
+      );
+    }
+
+    // Upload image first (deterministic path: same id every time)
     final storageRef =
     storage.ref().child('games/$gameId/submissions/$submissionId.jpg');
-
     await storageRef.putFile(imageFile);
     final downloadURL = await storageRef.getDownloadURL();
 
-    // 2) Write Firestore doc
-    final docRef = FirestoreRefs.submissions(db, gameId).doc(submissionId);
-    await docRef.set({
+    // Create payload INCLUDING imageUrl so Firestore "create" rules pass
+    final payload = <String, dynamic>{
       'gameId': gameId,
       'clueId': clueId,
       'playerId': playerId,
-      'imageUrl': downloadURL,
+      'imageUrl': downloadURL,               // <-- important for your rules
       'status': 'pending',
-      'createdAt': FieldValue.serverTimestamp(), // server-side time
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    // Use a transaction to avoid races: only set if it doesn't exist yet.
+    await db.runTransaction((tx) async {
+      final snap = await tx.get(subRef);
+      if (snap.exists) return;    // someone else won the race
+      tx.set(subRef, payload);    // counts as CREATE in rules
     });
 
-    // Return a Submission; createdAt will be null until server fills it
+    // Read back (either our create, or the winner of a race)
+    final snap = await subRef.get();
+    final data = snap.data() ?? payload;
+
     return Submission(
       id: submissionId,
       gameId: gameId,
       clueId: clueId,
       playerId: playerId,
-      imageUrl: downloadURL,
-      status: 'pending',
-      createdAt: null,
+      imageUrl: (data['imageUrl'] as String?) ?? downloadURL,
+      status: (data['status'] as String?) ?? 'pending',
+      createdAt: _asDateTime(data['createdAt']),
     );
   }
+
 
   /// Calls the Firebase HTTPS Function to score a submission via Cloud Run scorer.
   /// The backend Function will update the submission doc with:

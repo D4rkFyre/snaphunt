@@ -25,6 +25,20 @@ import 'package:snaphunt/models/submission_model.dart';
 class FirestoreRefs {
   FirestoreRefs._(); // Prevent instantiation (static-only utility)
 
+  // Deterministic submission ID per (playerId, clueId).
+  // Keep it simple; just avoid '/' in ids.
+  static String submissionIdFor(String playerId, String clueId) =>
+      '${playerId}__${clueId}';
+
+  // Convenience: document ref for that pair.
+  static DocumentReference<Map<String, dynamic>> submissionForPlayerClue(
+      FirebaseFirestore db,
+      String gameId,
+      String playerId,
+      String clueId,
+      ) =>
+      submissionDoc(db, gameId, submissionIdFor(playerId, clueId));
+
   // -------------------------------------------------------------------------
   // Collections (folders)
   // -------------------------------------------------------------------------
