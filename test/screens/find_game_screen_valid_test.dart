@@ -1,53 +1,70 @@
-// test/screens/find_game_screen_valid_test.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+
 import 'package:snaphunt/screens/find_game_screen.dart';
 import 'package:snaphunt/screens/lobby_screen.dart';
 
-/// ---------------------------------------------------------------------------
-/// JoinGameScreen (valid waiting game) test
-/// ---------------------------------------------------------------------------
-/// Purpose
-/// - Given a valid code for a **waiting** game:
-///   - Tapping "Find a Game" should navigate to the Lobby
-///   - The player should be appended to `players[]`
-///
-/// Why FakeFirebaseFirestore?
-/// - Lets us seed `/games` and `/codes` without hitting the network,
-///   and then read back the effect after the UI runs.
-/// ---------------------------------------------------------------------------
-void main() {
-  testWidgets('Valid code joins waiting game and navigates to Lobby', (tester) async {
-    final fake = FakeFirebaseFirestore();
+Future<void> pumpUntilFound(
+    WidgetTester tester,
+    Finder finder, {
+      Duration timeout = const Duration(seconds: 6),
+    }) async {
+  final end = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(end)) {
+    await tester.pump(const Duration(milliseconds: 60));
+    if (finder.evaluate().isNotEmpty) return;
+  }
+  throw TestFailure('Timed out waiting for $finder');
+}
 
-    // Seed a WAITING game + link its code
-    final gameRef = await fake.collection('games').add({
-      'joinCode': 'ABCD23',
-      'status': 'waiting',          // ← allows joins
-      'createdAt': DateTime.now(),
+void main() {
+  const deviceChannel = MethodChannel('snaphunt/device_id');
+
+  setUpAll(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(deviceChannel, (call) async {
+      if (call.method == 'getDeviceId') return 'dev-join';
+      return null;
+    });
+  });
+
+  tearDownAll(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(deviceChannel, null);
+  });
+
+  testWidgets('Valid code joins waiting game and navigates to Lobby', (tester) async {
+    final db = FakeFirebaseFirestore();
+
+    await db.collection('codes').doc('ZZZZZZ').set({
+      'status': 'reserved',
+      'gameId': 'game42',
+      'createdAt': Timestamp.now(),
+    });
+
+    await db.collection('games').doc('game42').set({
+      'joinCode': 'ZZZZZZ',
+      'status': 'waiting',
+      'createdAt': Timestamp.now(),
       'players': <String>[],
     });
-    await fake.collection('codes').doc('ABCD23').set({
-      'status': 'reserved',
-      'gameId': gameRef.id,          // ← link code → game
-      'createdAt': DateTime.now(),
-    });
 
-    // Pump Join screen with the same fake DB
-    await tester.pumpWidget(MaterialApp(home: JoinGameScreen(db: fake)));
+    await tester.pumpWidget(MaterialApp(home: JoinGameScreen(db: db)));
+    await tester.pump(const Duration(milliseconds: 80));
 
-    // Enter code (lowercase on purpose; widget uppercases/validates internally)
-    await tester.enterText(find.byType(TextField).at(1), 'abcd23'); // code box
-    await tester.tap(find.text('Find a Game'));
-    await tester.pumpAndSettle();  // finish async + navigation + first lobby stream tick
+    await tester.enterText(find.byType(TextField).at(0), 'PlayerZed');
+    await tester.enterText(find.byType(TextField).at(1), 'ZZZZZZ');
 
-    // Landed in Lobby
+    final joinBtn = find.widgetWithText(ElevatedButton, 'Find a Game');
+    await tester.tap(joinBtn);
+
+    // Give async navigation time to occur
+    await tester.pump(const Duration(milliseconds: 120));
+    await pumpUntilFound(tester, find.byType(CreateGameLobbyScreen));
+
     expect(find.byType(CreateGameLobbyScreen), findsOneWidget);
-
-    // Player was added to the game’s players[]
-    final snap = await fake.collection('games').doc(gameRef.id).get();
-    final players = (snap.data()!['players'] as List).cast<String>();
-    expect(players.isNotEmpty, true);
   });
 }

@@ -5,6 +5,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
+import 'package:snaphunt/models/game_model.dart'; // enum + parser
 import 'clue_submission_screen.dart';
 
 /// ---------------------------------------------------------------------------
@@ -13,7 +14,8 @@ import 'clue_submission_screen.dart';
 /// Purpose
 /// - Show a **live lobby** for a specific game: who’s joined and the game status.
 /// - Lets the **host** start the game (players only watch).
-/// - When host starts (status -> "active"), **players** auto-navigate to Clues.
+/// - When host starts (status -> "started"), **players** auto-navigate to Clues.
+///   (Legacy "active" also treated as started via GameStatusX.fromString)
 /// ---------------------------------------------------------------------------
 class CreateGameLobbyScreen extends StatefulWidget {
   const CreateGameLobbyScreen({
@@ -37,7 +39,6 @@ class CreateGameLobbyScreen extends StatefulWidget {
 
 class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
   bool _navigated = false; // ensure we navigate once for joiners
-
   FirebaseFirestore get _db => widget.db ?? FirebaseFirestore.instance;
 
   @override
@@ -76,13 +77,49 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
             }
 
             final data = snap.data!.data()!;
-            final status = (data['status'] as String?) ?? 'waiting';
-            final players = (data['players'] as List?)?.cast<String>() ?? const <String>[];
+            final statusRaw = (data['status'] as String?) ?? 'waiting';
+            final status = GameStatusX.fromString(statusRaw); // maps "active" -> started
+
+            final hostDeviceId = (data['hostDeviceId'] as String?) ?? '';
+
+            // Players array supports legacy strings OR {deviceId,nickname}
+            final rawPlayers = data['players'];
+            final List<_DisplayPlayer> parsedPlayers = [];
+            if (rawPlayers is List) {
+              for (final e in rawPlayers) {
+                if (e is String) {
+                  // legacy string: we don't know deviceId; keep name
+                  parsedPlayers.add(_DisplayPlayer(deviceId: '', name: e));
+                } else if (e is Map<String, dynamic>) {
+                  final deviceId = (e['deviceId'] as String?) ?? '';
+                  final nickname = (e['nickname'] as String?) ?? '';
+                  final display = nickname.isNotEmpty
+                      ? nickname
+                      : (deviceId.isNotEmpty ? deviceId : 'Player');
+                  parsedPlayers.add(_DisplayPlayer(deviceId: deviceId, name: display));
+                }
+              }
+            }
+
+            // Filter out the host (if we can identify via deviceId)
+            final List<_DisplayPlayer> filtered = parsedPlayers.where((p) {
+              if (hostDeviceId.isEmpty) return true; // can't tell -> keep
+              return p.deviceId.isEmpty || p.deviceId != hostDeviceId;
+            }).toList();
+
+            // De-duplicate by deviceId (or by name when deviceId missing)
+            final dedup = <String, _DisplayPlayer>{};
+            for (final p in filtered) {
+              final key = p.deviceId.isNotEmpty ? 'd:${p.deviceId}' : 'n:${p.name}';
+              dedup[key] = p;
+            }
+            final players = dedup.values.map((p) => p.name).toList(growable: false);
 
             // -----------------------------------------------------------------
-            // Player (not host) → auto-navigate to Clues when status == "active"
+            // Player (not host) → auto-navigate to Clues when status == started
+            // (legacy "active" handled by parser)
             // -----------------------------------------------------------------
-            if (!widget.isHost && !_navigated && status == 'active') {
+            if (!widget.isHost && !_navigated && status == GameStatus.started) {
               _navigated = true; // prevent multiple pushes
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (!mounted) return;
@@ -140,7 +177,7 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
                 ),
 
                 const SizedBox(height: 8),
-                Text('gameId: ${widget.gameId} • status: $status',
+                Text('gameId: ${widget.gameId} • status: $statusRaw',
                     style: const TextStyle(color: Colors.white70)),
                 const SizedBox(height: 20),
 
@@ -206,11 +243,12 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
                 // Host-only Start Game button
                 if (widget.isHost)
                   ElevatedButton(
-                    onPressed: status == 'waiting'
+                    onPressed: status == GameStatus.waiting
                         ? () async {
                       try {
-                        await gameDoc.update({'status': 'active'});
-                        // Host stays on lobby or navigate host elsewhere if you prefer
+                        // Write enum string consistently ("started")
+                        await gameDoc.update({'status': GameStatus.started.asString});
+                        // Host stays on lobby (players will auto-navigate)
                       } catch (e) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('Failed to start game: $e')),
@@ -234,4 +272,10 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
       ),
     );
   }
+}
+
+class _DisplayPlayer {
+  final String deviceId;
+  final String name;
+  const _DisplayPlayer({required this.deviceId, required this.name});
 }

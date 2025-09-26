@@ -8,12 +8,9 @@ import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/services/join_code.dart';
 import 'package:snaphunt/models/clue_model.dart';
 import 'package:snaphunt/models/submission_model.dart';
-import 'dart:io';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-
 
 class GameRepository {
   /// NOTE: Make these nullable so we don't touch Firebase singletons in tests
@@ -31,11 +28,106 @@ class GameRepository {
   FirebaseFirestore get db => _db ?? FirebaseFirestore.instance;
   FirebaseStorage get storage => _storage ?? FirebaseStorage.instance;
 
+  /// Player flow: join by code with (deviceId, nickname).
+  /// Enforces: game exists, status == waiting, and host device cannot join as player.
+  Future<(String gameId, String joinCode)> joinGameByCode({
+    required String code,
+    required String deviceId,
+    required String nickname,
+  }) async {
+    final c = code.toUpperCase();
+
+    return await db.runTransaction<(String, String)>((tx) async {
+      // 1) code -> gameId
+      final codeRef = FirestoreRefs.codeDoc(db, c);
+      final codeSnap = await tx.get(codeRef);
+      if (!codeSnap.exists) throw StateError('No game found.');
+      final gameId = (codeSnap.data()!['gameId'] as String?) ?? '';
+      if (gameId.isEmpty) throw StateError('No game found.');
+
+      // 2) validate game + status
+      final gameRef = FirestoreRefs.gameDoc(db, gameId);
+      final gameSnap = await tx.get(gameRef);
+      if (!gameSnap.exists) throw StateError('No game found.');
+
+      final data = gameSnap.data()!;
+      final statusStr =
+          (data['status'] as String?) ?? GameStatus.waiting.asString;
+      if (statusStr != GameStatus.waiting.asString) {
+        throw StateError('Game already started.');
+      }
+
+      final hostDeviceId = data['hostDeviceId'] as String?;
+      final playerDeviceIds =
+          (data['playerDeviceIds'] as List?)?.whereType<String>().toSet() ??
+              <String>{};
+
+      // Role enforcement: host device can't join as player.
+      if (hostDeviceId != null && hostDeviceId == deviceId) {
+        throw StateError(
+            'You are the host on this device and cannot join as a player.');
+      }
+
+      // 3) updates: add deviceId and ensure players[] has a display entry
+      final updates = <String, dynamic>{};
+
+      if (!playerDeviceIds.contains(deviceId)) {
+        updates['playerDeviceIds'] = FieldValue.arrayUnion([deviceId]);
+      }
+
+      updates['players'] = FieldValue.arrayUnion([
+        {'deviceId': deviceId, 'nickname': nickname},
+      ]);
+
+      tx.update(gameRef, updates);
+      return (gameId, c);
+    });
+  }
+
+  /// Host flow: set host device (id + optional nickname), but only if not set or same device.
+  Future<void> setHostDeviceId({
+    required String gameId,
+    required String hostDeviceId,
+    String? hostNickname,
+  }) async {
+    final gameRef = FirestoreRefs.gameDoc(db, gameId);
+    await db.runTransaction((tx) async {
+      final snap = await tx.get(gameRef);
+      if (!snap.exists) return;
+
+      final data = snap.data()!;
+      final currentHost = data['hostDeviceId'] as String?;
+      if (currentHost != null &&
+          currentHost.isNotEmpty &&
+          currentHost != hostDeviceId) {
+        // Host already set to someone else; leave it alone.
+        return;
+      }
+
+      final updates = <String, dynamic>{
+        'hostDeviceId': hostDeviceId,
+        // ensure arrays exist (arrayUnion with empty keeps them typed as arrays)
+        'playerDeviceIds': FieldValue.arrayUnion(<String>[]),
+        'players': FieldValue.arrayUnion(<Map<String, dynamic>>[]),
+      };
+
+      if (hostNickname != null && hostNickname.isNotEmpty) {
+        updates['players'] = FieldValue.arrayUnion([
+          {'deviceId': hostDeviceId, 'nickname': hostNickname},
+        ]);
+      }
+
+      tx.update(gameRef, updates);
+    });
+  }
+
+  /// Host flow: create a game with a unique join code.
+  /// Writes Firestore strings for status (waiting/started/finished).
   Future<Game> createGame({String? hostName}) async {
     const maxAttempts = 10;
 
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      final code = JoinCode.generate();
+      final code = JoinCode.generate().toUpperCase();
 
       try {
         final game = await db.runTransaction<Game>((tx) async {
@@ -52,25 +144,32 @@ class GameRepository {
           final gamesCol = FirestoreRefs.games(db);
           final newGameRef = gamesCol.doc();
 
+          // Reserve the code -> gameId link
           tx.set(codeRef, {
             'status': 'reserved',
             'gameId': newGameRef.id,
             'createdAt': FieldValue.serverTimestamp(),
           });
 
+          // Create the game doc
           tx.set(newGameRef, {
             'joinCode': code,
-            'status': 'waiting',
+            'status': GameStatus.waiting.asString,
             'createdAt': FieldValue.serverTimestamp(),
+            // Keep legacy-friendly players list (strings) so old UIs/tests still work.
             'players': hostName == null ? <String>[] : <String>[hostName],
+            // hostDeviceId/playerDeviceIds will be set later (setHostDeviceId / joins)
           });
 
+          // Return a strongly-typed Game for the UI layer
           return Game(
             id: newGameRef.id,
             joinCode: code,
-            status: 'waiting',
-            createdAt: DateTime.now(),
-            players: hostName == null ? const [] : [hostName],
+            status: GameStatus.waiting,
+            createdAt: Timestamp.now(), // local fallback until server writes
+            players: hostName == null
+                ? const <PlayerEntry>[]
+                : [PlayerEntry(deviceId: "", nickname: hostName)],
           );
         });
 
@@ -78,7 +177,7 @@ class GameRepository {
       } on FirebaseException catch (e) {
         if (e.code == 'already-exists') {
           if (attempt == maxAttempts) rethrow;
-          continue;
+          continue; // retry with a new code
         }
         rethrow;
       }
@@ -100,7 +199,7 @@ class GameRepository {
   }) async {
     final clueId = const Uuid().v4();
     final storageRef =
-    FirebaseStorage.instance.ref().child('games/$gameId/clues/$clueId.jpg');
+    storage.ref().child('games/$gameId/clues/$clueId.jpg');
 
     // Optional: attach metadata (handy for debugging in Storage)
     final metadata = SettableMetadata(
@@ -126,8 +225,9 @@ class GameRepository {
 
     // debug
     // ignore: avoid_print
-    print('[uploadClue] gameId=$gameId clueId=$clueId '
-        'lat=$lat lng=$lng willWriteLocation=${data.containsKey('location')}');
+    print(
+        "[uploadClue] gameId=$gameId clueId=$clueId lat=$lat lng=$lng willWriteLocation=${data.containsKey('location')}"
+    );
 
     await FirestoreRefs.clues(db, gameId)
         .doc(clueId)
@@ -145,48 +245,91 @@ class GameRepository {
         .map((qs) => qs.docs.map((d) => Clue.fromSnapshot(d)).toList());
   }
 
-  /// Upload a player's submission image and create a submission doc.
-  /// Storage: games/{gameId}/submissions/{submissionId}.jpg
-  /// Firestore: /games/{gameId}/submissions/{submissionId}
+  // === Helpers for deterministic IDs ==================================
+
+  /// Sanitize a string to be safe in Firestore doc IDs and Storage paths.
+  String _safeIdPart(String s) =>
+      s.replaceAll(RegExp(r'[^A-Za-z0-9_\-]'), '_');
+
+  /// Deterministic submission ID per (playerId, clueId).
+  String _submissionIdFor(String playerId, String clueId) =>
+      '${_safeIdPart(playerId)}__${_safeIdPart(clueId)}';
+
+  DateTime? _asDateTime(dynamic v) {
+    if (v is Timestamp) return v.toDate();
+    if (v is DateTime) return v;
+    return null;
+  }
+
+  /// Upload a player's submission image and create a submission doc **once**
+  /// per (playerId, clueId). Includes imageUrl on CREATE to satisfy rules.
   Future<Submission> uploadPlayerSubmission({
     required String gameId,
     required String clueId,
     required String playerId, // deviceId or nickname
     required File imageFile,
   }) async {
-    final submissionId = const Uuid().v4();
+    final submissionId = _submissionIdFor(playerId, clueId);
+    final subRef = FirestoreRefs.submissions(db, gameId).doc(submissionId);
 
-    // 1) Upload image to Storage
-    final storageRef = storage.ref().child('games/$gameId/submissions/$submissionId.jpg');
+    // If it already exists, just return it (prevents duplicates after rejoin)
+    final existing = await subRef.get();
+    if (existing.exists) {
+      final m = existing.data()!;
+      return Submission(
+        id: submissionId,
+        gameId: gameId,
+        clueId: clueId,
+        playerId: playerId,
+        imageUrl: (m['imageUrl'] as String?) ?? '',
+        status: (m['status'] as String?) ?? 'pending',
+        createdAt: _asDateTime(m['createdAt']),
+      );
+    }
 
+    // Upload image first (deterministic path: same id every time)
+    final storageRef =
+    storage.ref().child('games/$gameId/submissions/$submissionId.jpg');
     await storageRef.putFile(imageFile);
     final downloadURL = await storageRef.getDownloadURL();
 
-    // 2) Write Firestore doc
-    final docRef = FirestoreRefs.submissions(db, gameId).doc(submissionId);
-    await docRef.set({
+    // Create payload INCLUDING imageUrl so Firestore "create" rules pass
+    final payload = <String, dynamic>{
       'gameId': gameId,
       'clueId': clueId,
       'playerId': playerId,
-      'imageUrl': downloadURL,
+      'imageUrl': downloadURL,               // <-- important for your rules
       'status': 'pending',
-      'createdAt': FieldValue.serverTimestamp(), // server-side time
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    // Use a transaction to avoid races: only set if it doesn't exist yet.
+    await db.runTransaction((tx) async {
+      final snap = await tx.get(subRef);
+      if (snap.exists) return;    // someone else won the race
+      tx.set(subRef, payload);    // counts as CREATE in rules
     });
 
-    // Return a Submission; createdAt will be null until server fills it
+    // Read back (either our create, or the winner of a race)
+    final snap = await subRef.get();
+    final data = snap.data() ?? payload;
+
     return Submission(
       id: submissionId,
       gameId: gameId,
       clueId: clueId,
       playerId: playerId,
-      imageUrl: downloadURL,
-      status: 'pending',
-      createdAt: null,
+      imageUrl: (data['imageUrl'] as String?) ?? downloadURL,
+      status: (data['status'] as String?) ?? 'pending',
+      createdAt: _asDateTime(data['createdAt']),
     );
   }
+
+
   /// Calls the Firebase HTTPS Function to score a submission via Cloud Run scorer.
-  /// The backend Function will update the submission doc with { score, status: "scored", components, diagnostics, scoredAt }.
-  /// Throws an Exception on non-200 responses with a short body snippet for easier debugging.
+  /// The backend Function will update the submission doc with:
+  /// { score, status: "scored", components, diagnostics, scoredAt }.
+  /// Throws an Exception on non-200 responses with a short body snippet.
   Future<void> scoreSubmission({
     required String gameId,
     required String submissionId,
@@ -212,21 +355,17 @@ class GameRepository {
         body: jsonEncode(payload),
       );
     } on Exception catch (e) {
-      // Network/transport error
       throw Exception('Failed to call scoreSubmission: $e');
     }
 
     if (resp.statusCode != 200) {
       final body = resp.body;
       final snippet = body.length > 240 ? '${body.substring(0, 240)}…' : body;
-      throw Exception(
-        'scoreSubmission failed (${resp.statusCode}): $snippet',
-      );
+      throw Exception('scoreSubmission failed (${resp.statusCode}): $snippet');
     }
   }
 
-  /// Store the computed game area on the game document.
-  /// This is merge-safe and won’t affect other fields.
+  /// Store the computed game area on the game document (merge-safe).
   Future<void> setGameArea({
     required String gameId,
     required double centerLat,

@@ -1,5 +1,4 @@
 // lib/screens/host_screen.dart
-// lib/host_screen.dart
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -12,6 +11,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/models/game_model.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
+import 'package:snaphunt/services/device_id.dart';
 
 // One-time tutorial memory
 import 'package:shared_preferences/shared_preferences.dart';
@@ -48,6 +48,13 @@ class _HostGameScreenState extends State<HostGameScreen> {
   int _selectedIndex = 0;
   bool _busy = false;
   String? _error;
+  String? _deviceId;
+
+  Future<void> _loadDeviceId() async {
+    final id = await DeviceId.get();
+    if (!mounted) return;
+    setState(() => _deviceId = id);
+  }
 
   final _nameCtrl = TextEditingController();
   final ImagePicker _picker = ImagePicker();
@@ -70,6 +77,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
   @override
   void initState() {
     super.initState();
+    _loadDeviceId();
     // Warm up location (optional; improves first-fix speed)
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _tryGetPosition();
@@ -220,7 +228,16 @@ class _HostGameScreenState extends State<HostGameScreen> {
     });
 
     try {
+      // 0) Create the game
       final Game game = await _repo.createGame(hostName: hostName);
+
+      // 0.1) Stamp host device → enforces role consistency immediately
+      final deviceId = _deviceId ?? await DeviceId.get();
+      await _repo.setHostDeviceId(
+        gameId: game.id,
+        hostDeviceId: deviceId,
+        hostNickname: hostName,
+      );
 
       // 1) Upload all clues (with lat/lng)
       for (final clue in _clues) {
@@ -228,8 +245,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
 
         // debug
         // ignore: avoid_print
-        print(
-            '[host] uploading clue: lat=${clue.lat}, lng=${clue.lng}, path=${clue.xfile.path}');
+        print('[host] uploading clue: lat=${clue.lat}, lng=${clue.lng}, path=${clue.xfile.path}');
 
         await _repo.uploadClue(
           gameId: game.id,
@@ -254,8 +270,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
       } else {
         // debug
         // ignore: avoid_print
-        print(
-            '[host] no GPS on any clue -> game area not written (normal fallback)');
+        print('[host] no GPS on any clue -> game area not written (normal fallback)');
       }
 
 
@@ -266,14 +281,16 @@ class _HostGameScreenState extends State<HostGameScreen> {
 
 
 
+
       // 3) Navigate to lobby
+ 
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => CreateGameLobbyScreen(
             gameId: game.id,
             joinCode: game.joinCode,
             isHost: true,
-            playerId: hostName, // pass host nickname through
+            playerId: deviceId, // pass the host's device identity
             db: _db,
           ),
         ),
@@ -284,6 +301,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
       if (mounted) setState(() => _busy = false);
     }
   }
+
 
   void _onItemTapped(int index) => setState(() => _selectedIndex = index);
 

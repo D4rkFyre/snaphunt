@@ -3,6 +3,8 @@ import 'find_game_screen.dart';
 import 'host_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:snaphunt/services/device_id.dart';
+import 'package:snaphunt/services/rejoin_service.dart';
 
 /// ---------------------------------------------------------------------------
 /// HomeScreen
@@ -36,6 +38,19 @@ class _HomeScreenState extends State<HomeScreen> {
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;  // visual only in this screen
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final id = await DeviceId.get();
+      if (!mounted) return;
+      await RejoinService.promptRejoinIfApplicable(
+        context: context,
+        deviceId: id,
+      );
     });
   }
 
@@ -94,6 +109,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
+
             const SizedBox(height: 40),
 
             // -------------------------------
@@ -123,6 +139,23 @@ class _HomeScreenState extends State<HomeScreen> {
                 'assets/icons/camera.svg',
                 width: 160, // bigger icon if needed
                 height: 160,
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            TextButton(
+              onPressed: () async {
+                final id = await DeviceId.get();
+                if (!context.mounted) return;
+                await RejoinService.promptRejoinIfApplicable(
+                  context: context,
+                  deviceId: id,
+                );
+              },
+              child: const Text(
+                'Rejoin Game',
+                style: TextStyle(color: Colors.yellowAccent, fontSize: 16),
               ),
             ),
           ],

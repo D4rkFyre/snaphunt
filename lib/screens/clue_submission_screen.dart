@@ -36,10 +36,45 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
   // Store the player's uploaded image URL for thumbnail per clue
   final Map<String, String> _mySubmissionThumb = <String, String>{};
 
+  Future<void> _prefetchMySubmissions() async {
+    try {
+      final q = await FirestoreRefs
+          .submissions(_repo.db, widget.gameId)
+          .where('playerId', isEqualTo: widget.playerId)
+          .get();
+
+      final submitted = <String>{};
+      final thumbs = <String, String>{};
+
+      for (final d in q.docs) {
+        final data = d.data();
+        final clueId = data['clueId'] as String?;
+        final imageUrl = data['imageUrl'] as String?;
+        if (clueId != null) {
+          submitted.add(clueId);
+          if (imageUrl != null) thumbs[clueId] = imageUrl;
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _submitted
+          ..clear()
+          ..addAll(submitted);
+        _mySubmissionThumb
+          ..clear()
+          ..addAll(thumbs);
+      });
+    } catch (_) {
+      // Non-fatal: repo-level uniqueness (next section) still blocks duplicates
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _repo = widget.repository ?? GameRepository();
+    _prefetchMySubmissions();
   }
 
   // ---------------------- Location helpers ----------------------
