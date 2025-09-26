@@ -36,7 +36,9 @@ class HostGameScreen extends StatefulWidget {
 
   final GameRepository? _repo;
   final FirebaseFirestore? _db;
-  final bool requireCluesToCreate; // NEW
+  final bool requireCluesToCreate;
+
+
 
   @override
   State<HostGameScreen> createState() => _HostGameScreenState();
@@ -263,15 +265,25 @@ class _HostGameScreenState extends State<HostGameScreen> {
           centerLng: area['centerLng']!,
           radiusMeters: area['radiusMeters']!,
         );
+
+
       } else {
         // debug
         // ignore: avoid_print
         print('[host] no GPS on any clue -> game area not written (normal fallback)');
       }
 
+
+
+
+
       if (!mounted) return;
 
-      // 3) Navigate to lobby (use the same deviceId we already resolved)
+
+
+
+      // 3) Navigate to lobby
+ 
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => CreateGameLobbyScreen(
@@ -295,6 +307,10 @@ class _HostGameScreenState extends State<HostGameScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final area = _computeBoundingCircle();
+    final radiusDisplay = area?['radiusMeters']?.toStringAsFixed(0);
+
+
     return Scaffold(
       backgroundColor: const Color(0xFF3E2C8B),
       appBar: AppBar(
@@ -432,7 +448,12 @@ class _HostGameScreenState extends State<HostGameScreen> {
                 ),
               ),
 
+
+
+
               if (_clues.isNotEmpty) ...[
+
+
                 const SizedBox(height: 16),
                 Row(
                   children: [
@@ -473,6 +494,22 @@ class _HostGameScreenState extends State<HostGameScreen> {
                           // Small GPS badge
                           Positioned(
                             left: 4,
+                            bottom: 24,
+                            child: Opacity(
+                              opacity: 0.9,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.black87,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            left: 4,
                             bottom: 4,
                             child: Opacity(
                               opacity: 0.9,
@@ -501,6 +538,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
                               ),
                             ),
                           ),
+
                           GestureDetector(
                             onTap: () =>
                                 setState(() => _clues.removeAt(i)),
@@ -513,6 +551,14 @@ class _HostGameScreenState extends State<HostGameScreen> {
                           ),
                         ],
                       ),
+                        Text(
+                        (radiusDisplay != null)
+                        ? 'Game area radius: ${radiusDisplay}m'
+                            : 'Game area not set',
+                        style: const TextStyle(
+                        fontSize: 20, color: Colors.white),
+                        ),
+
                   ],
                 ),
               ],

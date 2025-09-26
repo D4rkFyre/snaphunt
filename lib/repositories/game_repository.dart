@@ -387,4 +387,7 @@ class GameRepository {
 
     return gameRef.set(payload, SetOptions(merge: true));
   }
-}
+
+  }
+
+
