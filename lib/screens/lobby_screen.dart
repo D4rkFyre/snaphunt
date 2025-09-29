@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/models/game_model.dart'; // enum + parser
 import 'clue_submission_screen.dart';
+import 'host_live_submissions_screen.dart'; // ⬅️ NEW: host dashboard after Start
 
 /// ---------------------------------------------------------------------------
 /// CreateGameLobbyScreen
@@ -246,9 +247,20 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
                     onPressed: status == GameStatus.waiting
                         ? () async {
                       try {
-                        // Write enum string consistently ("started")
-                        await gameDoc.update({'status': GameStatus.started.asString});
-                        // Host stays on lobby (players will auto-navigate)
+                        // Set started so players auto-navigate
+                        await gameDoc.update(
+                          {'status': GameStatus.started.asString, 'startedAt': FieldValue.serverTimestamp()},
+                        );
+
+                        // Host goes to live submissions dashboard
+                        if (!mounted) return;
+                        Navigator.of(context).pushReplacement(
+                          MaterialPageRoute(
+                            builder: (_) => HostLiveSubmissionsScreen(
+                              gameId: widget.gameId,
+                            ),
+                          ),
+                        );
                       } catch (e) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('Failed to start game: $e')),
