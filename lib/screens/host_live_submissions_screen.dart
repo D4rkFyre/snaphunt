@@ -50,39 +50,61 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: FirestoreRefs.gameDoc(_repo.db, widget.gameId).snapshots(),
         builder: (context, gameSnap) {
-          // ---- Build a clean roster: entries with stable id + label; filter host; dedupe by id ----
+          // ----------------- Build roster & detect host from index 0 -----------------
           final List<_RosterEntry> roster = [];
-          String hostDeviceId = '';
+          String hostDeviceIdField = ''; // from game doc field (if present)
+          String hostIdFromFirstEntry = ''; // from players[0] (ALWAYS host, per requirements)
 
           if (gameSnap.hasData && gameSnap.data?.data() != null) {
             final data = gameSnap.data!.data()!;
-            hostDeviceId = (data['hostDeviceId'] as String?) ?? '';
+            hostDeviceIdField = (data['hostDeviceId'] as String?)?.trim() ?? '';
 
             final raw = (data['players'] as List?) ?? const [];
-            final tmp = <String, _RosterEntry>{}; // id -> entry
 
-            for (final p in raw) {
-              if (p is String) {
-                // Legacy string: id == label
-                final id = p.trim();
-                if (id.isNotEmpty && id != hostDeviceId) {
-                  tmp[id] = _RosterEntry(id: id, label: p);
-                }
-              } else if (p is Map) {
-                final map = Map<String, dynamic>.from(p as Map);
-                final deviceId = (map['deviceId'] as String?)?.trim() ?? '';
-                final nickname = (map['nickname'] as String?)?.trim() ?? '';
-                // Prefer deviceId as stable id; fallback to nickname
-                final id = deviceId.isNotEmpty ? deviceId : (nickname.isNotEmpty ? nickname : '');
-                if (id.isEmpty) continue;
-                if (deviceId.isNotEmpty && deviceId == hostDeviceId) continue;
-
-                final label = nickname.isNotEmpty ? nickname : id;
-                tmp[id] = _RosterEntry(id: id, label: label);
+            // Identify host from first entry (string or map)
+            if (raw.isNotEmpty) {
+              final first = raw.first;
+              if (first is String) {
+                hostIdFromFirstEntry = first.trim();
+              } else if (first is Map) {
+                final map = Map<String, dynamic>.from(first as Map);
+                final did = (map['deviceId'] as String?)?.trim() ?? '';
+                final nick = (map['nickname'] as String?)?.trim() ?? '';
+                hostIdFromFirstEntry = did.isNotEmpty ? did : nick;
               }
             }
 
+            // Build roster skipping index 0 (host), dedup by id
+            final tmp = <String, _RosterEntry>{};
+            for (var i = 1; i < raw.length; i++) {
+              final e = raw[i];
+              if (e is String) {
+                final id = e.trim();
+                if (id.isEmpty) continue;
+                tmp[id] = _RosterEntry(id: id, label: e);
+              } else if (e is Map) {
+                final m = Map<String, dynamic>.from(e as Map);
+                final did = (m['deviceId'] as String?)?.trim() ?? '';
+                final nick = (m['nickname'] as String?)?.trim() ?? '';
+                final id = did.isNotEmpty ? did : (nick.isNotEmpty ? nick : '');
+                if (id.isEmpty) continue;
+                final label = nick.isNotEmpty ? nick : id;
+                tmp[id] = _RosterEntry(id: id, label: label);
+              }
+            }
             roster.addAll(tmp.values);
+          }
+
+          // Helper that says “is this the host?”
+          bool _isHostId(String id) {
+            if (id.isEmpty) return false;
+            if (hostDeviceIdField.isNotEmpty && id == hostDeviceIdField) {
+              return true;
+            }
+            if (hostIdFromFirstEntry.isNotEmpty && id == hostIdFromFirstEntry) {
+              return true;
+            }
+            return false;
           }
 
           return StreamBuilder<List<Clue>>(
@@ -129,20 +151,16 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                     );
                   }
 
-                  // Map<clueId, Map<playerId, submissionData>>
-                  final Map<String, Map<String, Map<String, dynamic>>>
-                  byClueByPlayer = {};
+                  // Map<clueId, Map<playerId, submissionData>>, skipping host submissions.
+                  final Map<String, Map<String, Map<String, dynamic>>> byClueByPlayer = {};
 
                   for (final d in subsSnap.data?.docs ?? const []) {
                     final Map<String, dynamic> m = d.data();
                     final clueId = m['clueId'] as String?;
-                    final playerId = (m['playerId'] as String?)?.trim();
-                    if (clueId == null || playerId == null || playerId.isEmpty) continue;
-
-                    (byClueByPlayer[clueId] ??= {})[playerId] = {
-                      ...m,
-                      'id': d.id,
-                    };
+                    final playerId = (m['playerId'] as String?)?.trim() ?? '';
+                    if (clueId == null || playerId.isEmpty) continue;
+                    if (_isHostId(playerId)) continue; // ignore host submissions
+                    (byClueByPlayer[clueId] ??= {})[playerId] = {...m, 'id': d.id};
                   }
 
                   return ListView.separated(
@@ -154,21 +172,19 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                       final clueSubs =
                           byClueByPlayer[clue.id] ?? const <String, Map>{};
 
-                      // Final roster to show:
-                      // - if we already have a proper roster, use it
-                      // - also include any submitters not in roster yet (label = id)
+                      // Merge roster with any submitters not in roster (still excluding host).
                       final merged = <String, _RosterEntry>{
                         for (final r in roster) r.id: r
                       };
                       for (final pid in clueSubs.keys) {
+                        if (_isHostId(pid)) continue;
                         merged.putIfAbsent(pid, () => _RosterEntry(id: pid, label: pid));
                       }
                       final finalRoster = merged.values.toList(growable: false);
 
                       final submittedCount = clueSubs.length;
-                      final totalCount = finalRoster.isNotEmpty
-                          ? finalRoster.length
-                          : submittedCount;
+                      final totalCount =
+                      finalRoster.isNotEmpty ? finalRoster.length : submittedCount;
 
                       return Container(
                         decoration: BoxDecoration(
@@ -187,7 +203,6 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              // Header row
                               Row(
                                 children: [
                                   const Text(
@@ -217,7 +232,6 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                               ),
                               const SizedBox(height: 8),
 
-                              // Clue image
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(12),
                                 child: AspectRatio(
@@ -231,8 +245,7 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                                         style: TextStyle(color: Colors.white70),
                                       ),
                                     ),
-                                    loadingBuilder:
-                                        (context, child, progress) {
+                                    loadingBuilder: (context, child, progress) {
                                       if (progress == null) return child;
                                       return const Center(
                                           child: CircularProgressIndicator());
@@ -242,12 +255,10 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                               ),
                               const SizedBox(height: 12),
 
-                              // Player tiles
                               _PlayerGallery(
                                 roster: finalRoster,
                                 submissionsForClue:
-                                Map<String, Map<String, dynamic>>.from(
-                                    clueSubs),
+                                Map<String, Map<String, dynamic>>.from(clueSubs),
                                 heroPrefix: 'clue-${clue.id}',
                               ),
                             ],
@@ -267,7 +278,7 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
 }
 
 class _RosterEntry {
-  final String id;    // stable key (prefer deviceId)
+  final String id;    // stable key (prefer deviceId or unique name)
   final String label; // display name
   const _RosterEntry({required this.id, required this.label});
 }
@@ -305,7 +316,6 @@ class _PlayerGallery extends StatelessWidget {
         ));
       }
     } else {
-      // Fallback: only show submitters
       submissionsForClue.forEach((pid, sub) {
         tiles.add(_PlayerTile(
           playerId: pid,
@@ -361,7 +371,6 @@ class _PlayerTile extends StatelessWidget {
     );
 
     if (!submitted) {
-      // Not submitted → initials tile
       return SizedBox(
         width: 84,
         child: Column(
@@ -392,7 +401,6 @@ class _PlayerTile extends StatelessWidget {
       );
     }
 
-    // Submitted → show thumbnail, tappable to expand
     return SizedBox(
       width: 84,
       child: Column(
