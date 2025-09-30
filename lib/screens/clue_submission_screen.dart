@@ -1,4 +1,5 @@
 // lib/screens/clue_submission_screen.dart
+import 'dart:async'; // <-- NEW: for StreamSubscription
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/models/clue_model.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
+import 'package:snaphunt/screens/score_screen.dart'; // <-- NEW
 
 class ClueSubmissionScreen extends StatefulWidget {
   final String gameId;
@@ -30,6 +32,10 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
   final ImagePicker _picker = ImagePicker();
   late final GameRepository _repo;
   bool _busy = false; // global uploading flag for UX
+
+  // Navigate-on-finish
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _gameSub; // <-- NEW
+  bool _navigatedToScores = false; // <-- NEW
 
   // Track what's been submitted this session (by clueId)
   final Set<String> _submitted = <String>{};
@@ -75,13 +81,41 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
     super.initState();
     _repo = widget.repository ?? GameRepository();
     _prefetchMySubmissions();
+
+    // --- NEW: Listen for game status changes and jump to ScoreScreen on finish ---
+    _gameSub = FirestoreRefs.gameDoc(_repo.db, widget.gameId)
+        .snapshots()
+        .listen((snap) {
+      final data = snap.data();
+      final status = (data?['status'] as String?)?.trim() ?? 'waiting';
+      if (status == 'finished') {
+        _goToScoresOnce();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _gameSub?.cancel(); // <-- NEW
+    super.dispose();
+  }
+
+  void _goToScoresOnce() { // <-- NEW
+    if (!mounted || _navigatedToScores) return;
+    _navigatedToScores = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => ScoreScreen(gameId: widget.gameId)),
+            (route) => false,
+      );
+    });
   }
 
   // ---------------------- Location helpers ----------------------
   Future<Position?> _getPlayerPosition() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      // Give the user a chance to enable (non-blocking)
       await Geolocator.openLocationSettings();
       serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) return null;
@@ -103,7 +137,6 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
       );
     } catch (_) {
       try {
-        // Fallback is fine for geofence check
         return await Geolocator.getLastKnownPosition();
       } catch (_) {
         return null;
@@ -191,7 +224,6 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
     }
 
     if (centerLat != null && centerLng != null && radiusMeters != null) {
-      // Area exists → try to get player position and check.
       final playerPos = await _getPlayerPosition();
       if (playerPos == null) {
         if (mounted) {
@@ -203,7 +235,6 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
             ),
           );
         }
-        // Fallback: continue with normal flow (as per requirement)
       } else {
         final userLat = playerPos.latitude;
         final userLng = playerPos.longitude;
@@ -213,7 +244,6 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
           lat2: centerLat,
           lng2: centerLng,
         );
-        // Block if outside radius
         if (dist > radiusMeters) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -226,7 +256,6 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
           }
           return; // Do NOT upload
         } else {
-          // Optional feedback: inside area
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -239,7 +268,6 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
         }
       }
     } else {
-      // No area → normal flow
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('No game area set — normal submission.')),
@@ -349,12 +377,11 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
 
   @override
   Widget build(BuildContext context) {
-    const darkBg = Color(0xFF3E2C8B); // solid dark background
-    const accent = Color(0xFFFFC943); // your yellow accent
+    const darkBg = Color(0xFF3E2C8B);
+    const accent = Color(0xFFFFC943);
 
     return Scaffold(
       backgroundColor: darkBg,
-      // Right-side drawer for profile/settings
       endDrawer: Drawer(
         backgroundColor: darkBg,
         child: ListView(
@@ -382,8 +409,6 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
           ],
         ),
       ),
-
-      // Top app bar
       appBar: AppBar(
         backgroundColor: darkBg,
         elevation: 0,
