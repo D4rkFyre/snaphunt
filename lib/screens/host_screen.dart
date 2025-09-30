@@ -273,14 +273,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
         print('[host] no GPS on any clue -> game area not written (normal fallback)');
       }
 
-
-
-
-
       if (!mounted) return;
-
-
-
 
       // 3) Navigate to lobby
  

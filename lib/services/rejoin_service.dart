@@ -60,28 +60,56 @@ class RejoinService {
         return 0;
       });
 
-      // Build options (may include same game twice — one per role)
-      final options = <_RejoinOption>[];
+      // Build options using roles when present + dedupe by game.
+      // 'candidates' is already sorted newest-first above, so we preserve recency.
+      final Map<String, _RejoinOption> byGame = {};
+
       for (final doc in candidates) {
         final data = doc.data();
-        final code = (data['joinCode'] as String?) ?? '';
-        final statusRaw =
-            (data['status'] as String?) ?? GameStatus.waiting.asString;
-        final status = GameStatusX.fromString(statusRaw);
-        final isHostRole = ((data['hostDeviceId'] as String?) ?? '') == deviceId;
 
+        final code = (data['joinCode'] as String?) ?? '';
+        final statusRaw = (data['status'] as String?) ?? GameStatus.waiting.asString;
+        final status = GameStatusX.fromString(statusRaw);
         if (status != GameStatus.waiting && status != GameStatus.started) {
-          continue;
+          continue; // only show waiting/started
         }
 
-        options.add(_RejoinOption(
+        // Prefer roles map when available; fall back to hostDeviceId
+        final roles = (data['roles'] as Map?)?.cast<String, dynamic>() ?? const {};
+        final hostId = (data['hostDeviceId'] as String?) ?? '';
+        final isHostByRoles = roles[deviceId] == 'host';
+        final isHostByField = hostId == deviceId;
+        final isHostRole = isHostByRoles || isHostByField;
+
+        final incoming = _RejoinOption(
           gameId: doc.id,
           joinCode: code,
           isHost: isHostRole,
           statusRaw: statusRaw,
-        ));
+        );
+
+        final existing = byGame[doc.id];
+        if (existing == null) {
+          // First time we see this game (newest wins because candidates is sorted)
+          byGame[doc.id] = incoming;
+        } else {
+          // Prefer host over player for the same game;
+          // if both same role, prefer STARTED over WAITING.
+          final existingStarted =
+              GameStatusX.fromString(existing.statusRaw) == GameStatus.started;
+          final incomingStarted = status == GameStatus.started;
+
+          final takeIncoming = (!existing.isHost && incoming.isHost) ||
+              ((existing.isHost == incoming.isHost) &&
+                  (incomingStarted && !existingStarted));
+
+          if (takeIncoming) {
+            byGame[doc.id] = incoming;
+          }
+        }
       }
 
+      final options = byGame.values.toList();
       if (options.isEmpty) return;
 
       final pickedIdx = await showDialog<int>(
