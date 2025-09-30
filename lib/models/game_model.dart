@@ -79,6 +79,9 @@ class Game {
   final List<String> playerDeviceIds; // [] on legacy docs
   final List<PlayerEntry> players;    // [{deviceId, nickname}] or legacy strings -> converted
 
+  /// deviceId -> 'host' | 'player' (others ignored on read)
+  final Map<String, String> roles;
+
   const Game({
     required this.id,
     required this.joinCode,
@@ -87,6 +90,7 @@ class Game {
     this.hostDeviceId,
     this.playerDeviceIds = const [],
     this.players = const [],
+    this.roles = const {},
   });
 
   Game copyWith({
@@ -97,6 +101,7 @@ class Game {
     String? hostDeviceId,
     List<String>? playerDeviceIds,
     List<PlayerEntry>? players,
+    Map<String, String>? roles,
   }) {
     return Game(
       id: id ?? this.id,
@@ -106,6 +111,7 @@ class Game {
       hostDeviceId: hostDeviceId ?? this.hostDeviceId,
       playerDeviceIds: playerDeviceIds ?? this.playerDeviceIds,
       players: players ?? this.players,
+      roles: roles ?? this.roles,
     );
   }
 
@@ -114,10 +120,10 @@ class Game {
       'joinCode': joinCode,
       'status': status.asString, // write as string for Firestore
       'createdAt': createdAt,
-      // NEW fields (only include if present to keep writes minimal)
       if (hostDeviceId != null) 'hostDeviceId': hostDeviceId,
       'playerDeviceIds': playerDeviceIds,
       'players': players.map((p) => p.toMap()).toList(),
+      if (roles.isNotEmpty) 'roles': roles,
     };
   }
 
@@ -142,7 +148,21 @@ class Game {
       }
     }
 
-    final statusStr = (data['status'] as String?) ?? 'waiting';
+    // Parse roles map: { deviceId: 'host' | 'player' }
+    final rawRoles = data['roles'];
+    final parsedRoles = <String, String>{};
+    if (rawRoles is Map<String, dynamic>) {
+      rawRoles.forEach((k, v) {
+        if (k is String && v is String) {
+          // Only accept expected values; ignore anything else safely.
+          if (v == 'host' || v == 'player') {
+            parsedRoles[k] = v;
+          }
+        }
+      });
+    }
+
+    final statusStr = ((data['status'] as String?) ?? 'waiting').trim().toLowerCase();
 
     return Game(
       id: id,
@@ -152,6 +172,21 @@ class Game {
       hostDeviceId: data['hostDeviceId'] as String?, // null on legacy
       playerDeviceIds: parsedDeviceIds,
       players: parsedPlayers,
+      roles: parsedRoles,
     );
+  }
+
+  /// -------------------------------
+  /// Convenience getters
+  /// -------------------------------
+
+  /// Returns true if this device is the host of the game.
+  bool isHost(String deviceId) =>
+      hostDeviceId == deviceId || roles[deviceId] == 'host';
+
+  /// Returns only the non-host players.
+  Iterable<PlayerEntry> nonHostPlayers() {
+    if (hostDeviceId == null) return players;
+    return players.where((p) => p.deviceId != hostDeviceId);
   }
 }
