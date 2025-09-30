@@ -26,13 +26,26 @@ class HostLiveSubmissionsScreen extends StatefulWidget {
 class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
   late final GameRepository _repo;
 
-  // Prevent duplicate navigations when streams rebuild during/after end-game.
+  // Prevent duplicate navigations
   bool _navigatedToScores = false;
 
   @override
   void initState() {
     super.initState();
     _repo = widget.repository ?? GameRepository();
+  }
+
+  void _goToScoresOnce() {
+    if (!mounted || _navigatedToScores) return;
+    _navigatedToScores = true;
+    // Post-frame so we don't navigate during build.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => ScoreScreen(gameId: widget.gameId)),
+            (route) => false, // clear back stack
+      );
+    });
   }
 
   @override
@@ -54,57 +67,72 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: FirestoreRefs.gameDoc(_repo.db, widget.gameId).snapshots(),
         builder: (context, gameSnap) {
-          // ----------------- Build roster & detect host from index 0 -----------------
+          // ----------------- Build roster & detect host (schema-based) -----------------
           final List<_RosterEntry> roster = [];
-          String hostDeviceIdField = ''; // explicit hostDeviceId if present
-          String hostIdFromFirstEntry = ''; // first entry in players[] is host
+
+          // Read game doc data safely
+          String hostDeviceIdField = '';
+          Map<String, dynamic> roles = const {};
+          final rawPlayers = <dynamic>[];
+          String statusRaw = 'waiting';
 
           if (gameSnap.hasData && gameSnap.data?.data() != null) {
             final data = gameSnap.data!.data()!;
+            statusRaw = (data['status'] as String?)?.trim() ?? 'waiting';
             hostDeviceIdField = (data['hostDeviceId'] as String?)?.trim() ?? '';
-            final raw = (data['players'] as List?) ?? const [];
-
-            // first entry = host
-            if (raw.isNotEmpty) {
-              final first = raw.first;
-              if (first is String) {
-                hostIdFromFirstEntry = first.trim();
-              } else if (first is Map) {
-                final m = Map<String, dynamic>.from(first as Map);
-                final did = (m['deviceId'] as String?)?.trim() ?? '';
-                final nick = (m['nickname'] as String?)?.trim() ?? '';
-                hostIdFromFirstEntry = did.isNotEmpty ? did : nick;
-              }
-            }
-
-            // roster = players (skip index 0 => host), dedup by id
-            final tmp = <String, _RosterEntry>{};
-            for (var i = 1; i < raw.length; i++) {
-              final e = raw[i];
-              if (e is String) {
-                final id = e.trim();
-                if (id.isEmpty) continue;
-                tmp[id] = _RosterEntry(id: id, label: e);
-              } else if (e is Map) {
-                final m = Map<String, dynamic>.from(e as Map);
-                final did = (m['deviceId'] as String?)?.trim() ?? '';
-                final nick = (m['nickname'] as String?)?.trim() ?? '';
-                final id = did.isNotEmpty ? did : (nick.isNotEmpty ? nick : '');
-                if (id.isEmpty) continue;
-                final label = nick.isNotEmpty ? nick : id;
-                tmp[id] = _RosterEntry(id: id, label: label);
-              }
-            }
-            roster.addAll(tmp.values);
+            roles = (data['roles'] as Map?)?.cast<String, dynamic>() ?? const {};
+            final rp = data['players'];
+            if (rp is List) rawPlayers.addAll(rp);
           }
 
+          // If the game is finished (whether by this host or not), leave this screen.
+          if (statusRaw == 'finished') {
+            _goToScoresOnce();
+          }
+
+          // Find any host-backed entry to learn the host's nickname (for legacy string dup removal)
+          final hostNicknames = <String>{};
+          for (final e in rawPlayers) {
+            if (e is Map) {
+              final m = Map<String, dynamic>.from(e);
+              final did = (m['deviceId'] as String?)?.trim() ?? '';
+              final nick = (m['nickname'] as String?)?.trim() ?? '';
+              final isHost = (hostDeviceIdField.isNotEmpty && did == hostDeviceIdField) ||
+                  (did.isNotEmpty && roles[did] == 'host');
+              if (isHost && nick.isNotEmpty) hostNicknames.add(nick);
+            }
+          }
+
+          // Build roster = every participant who is NOT the host
+          final dedup = <String, _RosterEntry>{};
+          for (final e in rawPlayers) {
+            if (e is String) {
+              final name = e.trim();
+              if (name.isEmpty) continue;
+              if (hostNicknames.contains(name)) continue; // drop legacy host copy
+              dedup['n:$name'] = _RosterEntry(id: name, label: name);
+            } else if (e is Map) {
+              final m = Map<String, dynamic>.from(e);
+              final did = (m['deviceId'] as String?)?.trim() ?? '';
+              final nick = (m['nickname'] as String?)?.trim() ?? '';
+
+              final isHost = (hostDeviceIdField.isNotEmpty && did == hostDeviceIdField) ||
+                  (did.isNotEmpty && roles[did] == 'host');
+              if (isHost) continue;
+
+              final id = did.isNotEmpty ? did : (nick.isNotEmpty ? nick : '');
+              if (id.isEmpty) continue;
+              final label = nick.isNotEmpty ? nick : id;
+              final key = did.isNotEmpty ? 'd:$did' : 'n:$label';
+              dedup[key] = _RosterEntry(id: id, label: label);
+            }
+          }
+          roster.addAll(dedup.values);
+
+          // Simple host check for submissions (playerId == deviceId)
           bool _isHostId(String id) {
             if (id.isEmpty) return false;
-            if (hostDeviceIdField.isNotEmpty && id == hostDeviceIdField) return true;
-            if (hostIdFromFirstEntry.isNotEmpty && id == hostIdFromFirstEntry) {
-              return true;
-            }
-            return false;
+            return hostDeviceIdField.isNotEmpty && id == hostDeviceIdField;
           }
 
           return StreamBuilder<List<Clue>>(
@@ -340,7 +368,8 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                               }
 
                               try {
-                                debugPrint('[EndGame] Writing finished status...');
+                                debugPrint(
+                                    '[EndGame] Writing finished status...');
                                 await FirestoreRefs
                                     .gameDoc(_repo.db, widget.gameId)
                                     .set(
@@ -352,23 +381,9 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                                   SetOptions(merge: true),
                                 );
 
-                                debugPrint('[EndGame] Navigating to ScoreScreen...');
-
-                                // Navigate safely: guard with maybeOf + flag.
-                                if (!mounted) return;
-                                if (_navigatedToScores) return;
-                                final nav = Navigator.maybeOf(
-                                  context,
-                                  rootNavigator: true,
-                                );
-                                if (nav == null) return;
-                                _navigatedToScores = true;
-                                nav.pushReplacement(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        ScoreScreen(gameId: widget.gameId),
-                                  ),
-                                );
+                                debugPrint(
+                                    '[EndGame] Navigating to ScoreScreen...');
+                                _goToScoresOnce(); // one-way exit
                               } catch (e) {
                                 if (!mounted) return;
                                 ScaffoldMessenger.of(context).showSnackBar(
