@@ -79,6 +79,8 @@ class GameRepository {
         {'deviceId': deviceId, 'nickname': nickname},
       ]);
 
+      updates['roles.$deviceId'] = 'player';
+
       tx.update(gameRef, updates);
       return (gameId, c);
     });
@@ -109,6 +111,8 @@ class GameRepository {
         // ensure arrays exist (arrayUnion with empty keeps them typed as arrays)
         'playerDeviceIds': FieldValue.arrayUnion(<String>[]),
         'players': FieldValue.arrayUnion(<Map<String, dynamic>>[]),
+
+        'roles.$hostDeviceId': 'host',
       };
 
       if (hostNickname != null && hostNickname.isNotEmpty) {
