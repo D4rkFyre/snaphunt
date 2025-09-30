@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/models/clue_model.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
+import 'package:snaphunt/screens/score_screen.dart';
 
 class HostLiveSubmissionsScreen extends StatefulWidget {
   final String gameId;
@@ -24,6 +25,9 @@ class HostLiveSubmissionsScreen extends StatefulWidget {
 
 class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
   late final GameRepository _repo;
+
+  // Prevent duplicate navigations when streams rebuild during/after end-game.
+  bool _navigatedToScores = false;
 
   @override
   void initState() {
@@ -52,29 +56,28 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
         builder: (context, gameSnap) {
           // ----------------- Build roster & detect host from index 0 -----------------
           final List<_RosterEntry> roster = [];
-          String hostDeviceIdField = ''; // from game doc field (if present)
-          String hostIdFromFirstEntry = ''; // from players[0] (ALWAYS host, per requirements)
+          String hostDeviceIdField = ''; // explicit hostDeviceId if present
+          String hostIdFromFirstEntry = ''; // first entry in players[] is host
 
           if (gameSnap.hasData && gameSnap.data?.data() != null) {
             final data = gameSnap.data!.data()!;
             hostDeviceIdField = (data['hostDeviceId'] as String?)?.trim() ?? '';
-
             final raw = (data['players'] as List?) ?? const [];
 
-            // Identify host from first entry (string or map)
+            // first entry = host
             if (raw.isNotEmpty) {
               final first = raw.first;
               if (first is String) {
                 hostIdFromFirstEntry = first.trim();
               } else if (first is Map) {
-                final map = Map<String, dynamic>.from(first as Map);
-                final did = (map['deviceId'] as String?)?.trim() ?? '';
-                final nick = (map['nickname'] as String?)?.trim() ?? '';
+                final m = Map<String, dynamic>.from(first as Map);
+                final did = (m['deviceId'] as String?)?.trim() ?? '';
+                final nick = (m['nickname'] as String?)?.trim() ?? '';
                 hostIdFromFirstEntry = did.isNotEmpty ? did : nick;
               }
             }
 
-            // Build roster skipping index 0 (host), dedup by id
+            // roster = players (skip index 0 => host), dedup by id
             final tmp = <String, _RosterEntry>{};
             for (var i = 1; i < raw.length; i++) {
               final e = raw[i];
@@ -95,12 +98,9 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
             roster.addAll(tmp.values);
           }
 
-          // Helper that says “is this the host?”
           bool _isHostId(String id) {
             if (id.isEmpty) return false;
-            if (hostDeviceIdField.isNotEmpty && id == hostDeviceIdField) {
-              return true;
-            }
+            if (hostDeviceIdField.isNotEmpty && id == hostDeviceIdField) return true;
             if (hostIdFromFirstEntry.isNotEmpty && id == hostIdFromFirstEntry) {
               return true;
             }
@@ -132,7 +132,6 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                 );
               }
 
-              // Stream all submissions once, then group by clueId and playerId.
               return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                 stream: FirestoreRefs
                     .submissions(_repo.db, widget.gameId)
@@ -153,119 +152,251 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
 
                   // Map<clueId, Map<playerId, submissionData>>, skipping host submissions.
                   final Map<String, Map<String, Map<String, dynamic>>> byClueByPlayer = {};
-
                   for (final d in subsSnap.data?.docs ?? const []) {
                     final Map<String, dynamic> m = d.data();
                     final clueId = m['clueId'] as String?;
                     final playerId = (m['playerId'] as String?)?.trim() ?? '';
                     if (clueId == null || playerId.isEmpty) continue;
-                    if (_isHostId(playerId)) continue; // ignore host submissions
+                    if (_isHostId(playerId)) continue; // ignore host
                     (byClueByPlayer[clueId] ??= {})[playerId] = {...m, 'id': d.id};
                   }
 
-                  return ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                    itemCount: clues.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 16),
-                    itemBuilder: (context, index) {
-                      final clue = clues[index];
-                      final clueSubs =
-                          byClueByPlayer[clue.id] ?? const <String, Map>{};
+                  // ----- Completion logic for the End Game button -----
+                  // 1) Every clue has at least one submission?
+                  final allCluesHaveOne = clues.every(
+                        (c) => (byClueByPlayer[c.id]?.isNotEmpty ?? false),
+                  );
 
-                      // Merge roster with any submitters not in roster (still excluding host).
-                      final merged = <String, _RosterEntry>{
-                        for (final r in roster) r.id: r
-                      };
-                      for (final pid in clueSubs.keys) {
-                        if (_isHostId(pid)) continue;
-                        merged.putIfAbsent(pid, () => _RosterEntry(id: pid, label: pid));
-                      }
-                      final finalRoster = merged.values.toList(growable: false);
+                  // 2) Have ALL (non-host) players submitted for EVERY clue?
+                  bool everyoneSubmittedAll = false;
+                  if (roster.isNotEmpty) {
+                    everyoneSubmittedAll = clues.every((c) {
+                      final count = byClueByPlayer[c.id]?.length ?? 0;
+                      return count >= roster.length;
+                    });
+                  }
 
-                      final submittedCount = clueSubs.length;
-                      final totalCount =
-                      finalRoster.isNotEmpty ? finalRoster.length : submittedCount;
+                  return Column(
+                    children: [
+                      Expanded(
+                        child: ListView.separated(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                          itemCount: clues.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 16),
+                          itemBuilder: (context, index) {
+                            final clue = clues[index];
+                            final clueSubs =
+                                byClueByPlayer[clue.id] ?? const <String, Map>{};
 
-                      return Container(
-                        decoration: BoxDecoration(
-                          color: cardBg,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: const [
-                            BoxShadow(
-                              color: Colors.black26,
-                              blurRadius: 4,
-                              offset: Offset(0, 2),
-                            )
-                          ],
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Row(
-                                children: [
-                                  const Text(
-                                    'Clue',
-                                    style: TextStyle(
-                                      color: Colors.white70,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  const Spacer(),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black26,
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: Text(
-                                      '$submittedCount / $totalCount submitted',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
+                            // Merge roster with any submitters not in roster.
+                            final merged = <String, _RosterEntry>{
+                              for (final r in roster) r.id: r
+                            };
+                            for (final pid in clueSubs.keys) {
+                              merged.putIfAbsent(
+                                  pid, () => _RosterEntry(id: pid, label: pid));
+                            }
+                            final finalRoster = merged.values.toList(growable: false);
+
+                            final submittedCount = clueSubs.length;
+                            final totalCount = finalRoster.isNotEmpty
+                                ? finalRoster.length
+                                : submittedCount;
+
+                            return Container(
+                              decoration: BoxDecoration(
+                                color: cardBg,
+                                borderRadius: BorderRadius.circular(16),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Colors.black26,
+                                    blurRadius: 4,
+                                    offset: Offset(0, 2),
+                                  )
                                 ],
                               ),
-                              const SizedBox(height: 8),
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        const Text(
+                                          'Clue',
+                                          style: TextStyle(
+                                            color: Colors.white70,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        const Spacer(),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8, vertical: 4),
+                                          decoration: BoxDecoration(
+                                            color: Colors.black26,
+                                            borderRadius:
+                                            BorderRadius.circular(10),
+                                          ),
+                                          child: Text(
+                                            '$submittedCount / $totalCount submitted',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
 
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: AspectRatio(
-                                  aspectRatio: 16 / 9,
-                                  child: Image.network(
-                                    clue.imageUrl,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => const Center(
-                                      child: Text(
-                                        'Image failed to load',
-                                        style: TextStyle(color: Colors.white70),
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: AspectRatio(
+                                        aspectRatio: 16 / 9,
+                                        child: Image.network(
+                                          clue.imageUrl,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) =>
+                                          const Center(
+                                            child: Text(
+                                              'Image failed to load',
+                                              style: TextStyle(
+                                                  color: Colors.white70),
+                                            ),
+                                          ),
+                                          loadingBuilder:
+                                              (context, child, progress) {
+                                            if (progress == null) return child;
+                                            return const Center(
+                                                child:
+                                                CircularProgressIndicator());
+                                          },
+                                        ),
                                       ),
                                     ),
-                                    loadingBuilder: (context, child, progress) {
-                                      if (progress == null) return child;
-                                      return const Center(
-                                          child: CircularProgressIndicator());
-                                    },
-                                  ),
+                                    const SizedBox(height: 12),
+
+                                    _PlayerGallery(
+                                      roster: finalRoster,
+                                      submissionsForClue:
+                                      Map<String, Map<String, dynamic>>.from(
+                                          clueSubs),
+                                      heroPrefix: 'clue-${clue.id}',
+                                    ),
+                                  ],
                                 ),
                               ),
-                              const SizedBox(height: 12),
+                            );
+                          },
+                        ),
+                      ),
 
-                              _PlayerGallery(
-                                roster: finalRoster,
-                                submissionsForClue:
-                                Map<String, Map<String, dynamic>>.from(clueSubs),
-                                heroPrefix: 'clue-${clue.id}',
+                      // --------------------- End Game button ---------------------
+                      SafeArea(
+                        top: false,
+                        minimum: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        child: SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: ElevatedButton(
+                            onPressed: allCluesHaveOne
+                                ? () async {
+                              // If not everyone submitted all clues, confirm.
+                              if (!everyoneSubmittedAll) {
+                                final ok = await showDialog<bool>(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    backgroundColor:
+                                    const Color(0xFF241A5E),
+                                    title: const Text(
+                                      'End Game?',
+                                      style:
+                                      TextStyle(color: Colors.white),
+                                    ),
+                                    content: const Text(
+                                      'Are you sure? Some players haven’t submitted yet.',
+                                      style: TextStyle(
+                                          color: Colors.white70),
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.of(ctx).pop(false),
+                                        child: const Text('No'),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () =>
+                                            Navigator.of(ctx).pop(true),
+                                        child: const Text('Yes'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (ok != true) {
+                                  debugPrint('[EndGame] Cancelled by host');
+                                  return;
+                                }
+                              }
+
+                              try {
+                                debugPrint('[EndGame] Writing finished status...');
+                                await FirestoreRefs
+                                    .gameDoc(_repo.db, widget.gameId)
+                                    .set(
+                                  {
+                                    'status': 'finished',
+                                    'finishedAt':
+                                    FieldValue.serverTimestamp(),
+                                  },
+                                  SetOptions(merge: true),
+                                );
+
+                                debugPrint('[EndGame] Navigating to ScoreScreen...');
+
+                                // Navigate safely: guard with maybeOf + flag.
+                                if (!mounted) return;
+                                if (_navigatedToScores) return;
+                                final nav = Navigator.maybeOf(
+                                  context,
+                                  rootNavigator: true,
+                                );
+                                if (nav == null) return;
+                                _navigatedToScores = true;
+                                nav.pushReplacement(
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        ScoreScreen(gameId: widget.gameId),
+                                  ),
+                                );
+                              } catch (e) {
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                      content: Text(
+                                          'Failed to end game: $e')),
+                                );
+                              }
+                            }
+                                : null,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: allCluesHaveOne
+                                  ? Colors.redAccent
+                                  : Colors.grey,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
                               ),
-                            ],
+                              textStyle: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            child: const Text('End Game'),
                           ),
                         ),
-                      );
-                    },
+                      ),
+                    ],
                   );
                 },
               );
@@ -350,7 +481,9 @@ class _PlayerTile extends StatelessWidget {
   String _initials(String name) {
     final parts = name.trim().split(RegExp(r'\s+'));
     if (parts.isEmpty) return '?';
-    if (parts.length == 1) return parts.first.characters.take(2).toString().toUpperCase();
+    if (parts.length == 1) {
+      return parts.first.characters.take(2).toString().toUpperCase();
+    }
     return (parts.first.characters.take(1).toString() +
         parts.last.characters.take(1).toString())
         .toUpperCase();
