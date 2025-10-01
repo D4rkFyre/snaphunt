@@ -60,7 +60,7 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
         elevation: 0,
         centerTitle: true,
         title: const Text(
-          'Live Player Submissions',
+          'Player Submissions',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
         ),
       ),

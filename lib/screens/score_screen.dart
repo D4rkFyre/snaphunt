@@ -231,7 +231,7 @@ class _ScoreScreenState extends State<ScoreScreen> {
                               children: [
                                 Text(
                                   totalClues > 0
-                                      ? 'Winners (avg over $totalClues clues)'
+                                      ? 'Winners'
                                       : 'Winners',
                                   style: const TextStyle(
                                     color: Colors.white,
