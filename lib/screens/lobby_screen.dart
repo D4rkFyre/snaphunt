@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/models/game_model.dart'; // enum + parser
 import 'clue_submission_screen.dart';
+import 'host_live_submissions_screen.dart'; // <-- NEW: navigate host here
 
 /// ---------------------------------------------------------------------------
 /// CreateGameLobbyScreen
@@ -16,6 +17,7 @@ import 'clue_submission_screen.dart';
 /// - Lets the **host** start the game (players only watch).
 /// - When host starts (status -> "started"), **players** auto-navigate to Clues.
 ///   (Legacy "active" also treated as started via GameStatusX.fromString)
+/// - NEW: When status -> "started", **host** auto-navigates to HostLiveSubmissionsScreen.
 /// ---------------------------------------------------------------------------
 class CreateGameLobbyScreen extends StatefulWidget {
   const CreateGameLobbyScreen({
@@ -38,7 +40,7 @@ class CreateGameLobbyScreen extends StatefulWidget {
 }
 
 class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
-  bool _navigated = false; // ensure we navigate once for joiners
+  bool _navigated = false; // ensure we navigate once for both host & players
   FirebaseFirestore get _db => widget.db ?? FirebaseFirestore.instance;
 
   @override
@@ -133,9 +135,9 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
             dedupPlayers.values.toList(growable: false);
 
             // -----------------------------------------------------------------
-            // Player (not host) → auto-navigate to Clues when status == started
-            // (legacy "active" handled by parser)
+            // Auto-navigation based on role and status
             // -----------------------------------------------------------------
+            // Players (not host) → to Clues when started
             if (!widget.isHost && !_navigated && status == GameStatus.started) {
               _navigated = true; // prevent multiple pushes
               WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -145,6 +147,21 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
                     builder: (_) => ClueSubmissionScreen(
                       gameId: widget.gameId,
                       playerId: widget.playerId,
+                    ),
+                  ),
+                );
+              });
+            }
+
+            // HOST → to HostLiveSubmissionsScreen when started
+            if (widget.isHost && !_navigated && status == GameStatus.started) {
+              _navigated = true;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(
+                    builder: (_) => HostLiveSubmissionsScreen(
+                      gameId: widget.gameId,
                     ),
                   ),
                 );
@@ -265,7 +282,8 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
                                 'assets/icons/person-circle.svg',
                                 width: 50,
                                 height: 50,
-                                colorFilter: const ColorFilter.mode(Color(0xFF3E2C8B), BlendMode.srcIn),
+                                colorFilter: const ColorFilter.mode(
+                                    Color(0xFF3E2C8B), BlendMode.srcIn),
                               ),
                             ),
                             const SizedBox(height: 8),
@@ -314,13 +332,23 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
                         ? () async {
                       try {
                         // Write enum string consistently ("started")
-                        await gameDoc
-                            .update({'status': GameStatus.started.asString});
-                        // Host stays on lobby (players will auto-navigate)
+                        await gameDoc.update({'status': GameStatus.started.asString});
+
+                        // Navigate host immediately; stream will also flip to started.
+                        if (!mounted) return;
+                        if (_navigated) return;
+                        _navigated = true;
+                        Navigator.of(context).pushReplacement(
+                          MaterialPageRoute(
+                            builder: (_) => HostLiveSubmissionsScreen(
+                              gameId: widget.gameId,
+                            ),
+                          ),
+                        );
                       } catch (e) {
+                        if (!mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                              content: Text('Failed to start game: $e')),
+                          SnackBar(content: Text('Failed to start game: $e')),
                         );
                       }
                     }
@@ -328,12 +356,11 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.greenAccent,
                       foregroundColor: Colors.black,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 40, vertical: 20),
+                      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(30)),
-                      textStyle: const TextStyle(
-                          fontSize: 24, fontWeight: FontWeight.bold),
+                      textStyle:
+                      const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                     ),
                     child: const Text("Start Game"),
                   ),

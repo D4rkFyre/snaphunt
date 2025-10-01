@@ -1,4 +1,5 @@
 // lib/screens/clue_submission_screen.dart
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/models/clue_model.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
+import 'package:snaphunt/screens/score_screen.dart';
 
 class ClueSubmissionScreen extends StatefulWidget {
   final String gameId;
@@ -29,12 +31,96 @@ class ClueSubmissionScreen extends StatefulWidget {
 class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
   final ImagePicker _picker = ImagePicker();
   late final GameRepository _repo;
-  bool _busy = false; // global uploading flag for UX
+  bool _busy = false;
+
+  // Navigate-on-finish
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _gameSub;
+  bool _navigatedToScores = false;
 
   // Track what's been submitted this session (by clueId)
   final Set<String> _submitted = <String>{};
   // Store the player's uploaded image URL for thumbnail per clue
   final Map<String, String> _mySubmissionThumb = <String, String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _repo = widget.repository ?? GameRepository();
+    _prefetchMySubmissions();
+
+    // One-time read in case host already ended game before we arrived.
+    _checkFinishedOnce();
+
+    // Live listener to hop to scores as soon as game finishes.
+    _gameSub = FirestoreRefs.gameDoc(_repo.db, widget.gameId)
+        .snapshots()
+        .listen((snap) {
+      final status = (snap.data()?['status'] as String?)?.trim() ?? 'waiting';
+      if (status == 'finished') {
+        _goToScoresOnce();
+      }
+    });
+  }
+
+  Future<void> _checkFinishedOnce() async {
+    try {
+      final snap = await FirestoreRefs.gameDoc(_repo.db, widget.gameId).get();
+      final status = (snap.data()?['status'] as String?)?.trim() ?? 'waiting';
+      if (status == 'finished') {
+        _goToScoresOnce();
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  @override
+  void dispose() {
+    _gameSub?.cancel();
+    super.dispose();
+  }
+
+  void _goToScoresOnce() {
+    if (!mounted || _navigatedToScores) return;
+    _navigatedToScores = true;
+    // Give a tiny UX hint
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Game ended! Showing final scores…')),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => ScoreScreen(gameId: widget.gameId)),
+            (route) => false,
+      );
+    });
+  }
+
+  // ---------- Leave-game confirmation ----------
+  Future<bool> _confirmLeaveGame() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF241A5E),
+        title: const Text('Leave the game?', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Are you sure you want to leave this game? You may lose your place.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Stay'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Leave'),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
 
   Future<void> _prefetchMySubmissions() async {
     try {
@@ -65,23 +151,13 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
           ..clear()
           ..addAll(thumbs);
       });
-    } catch (_) {
-      // Non-fatal: repo-level uniqueness (next section) still blocks duplicates
-    }
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _repo = widget.repository ?? GameRepository();
-    _prefetchMySubmissions();
+    } catch (_) {/* non-fatal */}
   }
 
   // ---------------------- Location helpers ----------------------
   Future<Position?> _getPlayerPosition() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      // Give the user a chance to enable (non-blocking)
       await Geolocator.openLocationSettings();
       serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) return null;
@@ -103,7 +179,6 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
       );
     } catch (_) {
       try {
-        // Fallback is fine for geofence check
         return await Geolocator.getLastKnownPosition();
       } catch (_) {
         return null;
@@ -153,8 +228,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
             const Divider(height: 0, color: Colors.white24),
             ListTile(
               leading: const Icon(Icons.photo_camera, color: Colors.white),
-              title:
-              const Text('Take a Photo', style: TextStyle(color: Colors.white)),
+              title: const Text('Take a Photo', style: TextStyle(color: Colors.white)),
               onTap: () => Navigator.of(ctx).pop(ImageSource.camera),
             ),
           ],
@@ -174,8 +248,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
     // --------- Game area check BEFORE upload ----------
     double? centerLat, centerLng, radiusMeters;
     try {
-      final gameSnap =
-      await FirestoreRefs.gameDoc(_repo.db, widget.gameId).get();
+      final gameSnap = await FirestoreRefs.gameDoc(_repo.db, widget.gameId).get();
       final data = gameSnap.data();
       if (data != null) {
         if (data['centerLat'] != null &&
@@ -186,52 +259,37 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
           radiusMeters = (data['radiusMeters'] as num).toDouble();
         }
       }
-    } catch (_) {
-      // If read fails, fall through to normal flow (missing data)
-    }
+    } catch (_) {}
 
     if (centerLat != null && centerLng != null && radiusMeters != null) {
-      // Area exists → try to get player position and check.
       final playerPos = await _getPlayerPosition();
       if (playerPos == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Location unavailable — proceeding without area check.',
-              ),
-            ),
+            const SnackBar(content: Text('Location unavailable — proceeding without area check.')),
           );
         }
-        // Fallback: continue with normal flow (as per requirement)
       } else {
         final userLat = playerPos.latitude;
         final userLng = playerPos.longitude;
         final dist = _haversineMeters(
-          lat1: userLat,
-          lng1: userLng,
-          lat2: centerLat,
-          lng2: centerLng,
+          lat1: userLat, lng1: userLng, lat2: centerLat, lng2: centerLng,
         );
-        // Block if outside radius
         if (dist > radiusMeters) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(
-                    'You’re outside the game area (${dist.toStringAsFixed(0)}m > ${radiusMeters.toStringAsFixed(0)}m).'),
+                content: Text('You’re outside the game area (${dist.toStringAsFixed(0)}m > ${radiusMeters.toStringAsFixed(0)}m).'),
                 duration: const Duration(seconds: 4),
               ),
             );
           }
-          return; // Do NOT upload
+          return;
         } else {
-          // Optional feedback: inside area
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(
-                    'Inside game area (~${dist.toStringAsFixed(0)}m to center)'),
+                content: Text('Inside game area (~${dist.toStringAsFixed(0)}m to center)'),
                 duration: const Duration(seconds: 2),
               ),
             );
@@ -239,7 +297,6 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
         }
       }
     } else {
-      // No area → normal flow
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('No game area set — normal submission.')),
@@ -303,11 +360,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(score != null
-                  ? 'Scored! ${score!.toStringAsFixed(0)}'
-                  : 'Scored!'),
-            ),
+            SnackBar(content: Text(score != null ? 'Scored! ${score!.toStringAsFixed(0)}' : 'Scored!')),
           );
         }
       } catch (e) {
@@ -349,207 +402,210 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
 
   @override
   Widget build(BuildContext context) {
-    const darkBg = Color(0xFF3E2C8B); // solid dark background
-    const accent = Color(0xFFFFC943); // your yellow accent
+    const darkBg = Color(0xFF3E2C8B);
+    const accent = Color(0xFFFFC943);
 
-    return Scaffold(
-      backgroundColor: darkBg,
-      // Right-side drawer for profile/settings
-      endDrawer: Drawer(
+    return WillPopScope( // confirm on Android back
+      onWillPop: () async => await _confirmLeaveGame(),
+      child: Scaffold(
         backgroundColor: darkBg,
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: const [
-            DrawerHeader(
-              decoration: BoxDecoration(color: accent),
-              child: Text(
-                'Menu',
-                style: TextStyle(
-                  color: Colors.black,
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
+        endDrawer: Drawer(
+          backgroundColor: darkBg,
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: const [
+              DrawerHeader(
+                decoration: BoxDecoration(color: accent),
+                child: Text(
+                  'Menu',
+                  style: TextStyle(
+                    color: Colors.black,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
+              ListTile(
+                leading: Icon(Icons.person, color: Colors.white),
+                title: Text('Profile', style: TextStyle(color: Colors.white)),
+              ),
+              ListTile(
+                leading: Icon(Icons.settings, color: Colors.white),
+                title: Text('Settings', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        ),
+        appBar: AppBar(
+          backgroundColor: darkBg,
+          elevation: 0,
+          centerTitle: true,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            tooltip: 'Back',
+            onPressed: () async {
+              if (await _confirmLeaveGame()) {
+                if (!mounted) return;
+                Navigator.of(context).pop();
+              }
+            },
+          ),
+          title: const Text(
+            'Clues',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w600,
             ),
-            ListTile(
-              leading: Icon(Icons.person, color: Colors.white),
-              title: Text('Profile', style: TextStyle(color: Colors.white)),
-            ),
-            ListTile(
-              leading: Icon(Icons.settings, color: Colors.white),
-              title: Text('Settings', style: TextStyle(color: Colors.white)),
+          ),
+          actions: [
+            Builder(
+              builder: (ctx) => IconButton(
+                icon: const Icon(Icons.person, color: Colors.white),
+                tooltip: 'Menu',
+                onPressed: () => Scaffold.of(ctx).openEndDrawer(),
+              ),
             ),
           ],
         ),
-      ),
 
-      // Top app bar
-      appBar: AppBar(
-        backgroundColor: darkBg,
-        elevation: 0,
-        centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.of(context).pop(),
-          tooltip: 'Back',
-        ),
-        title: const Text(
-          'Clues',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 22,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        actions: [
-          Builder(
-            builder: (ctx) => IconButton(
-              icon: const Icon(Icons.person, color: Colors.white),
-              tooltip: 'Menu',
-              onPressed: () => Scaffold.of(ctx).openEndDrawer(),
-            ),
-          ),
-        ],
-      ),
-
-      // Live clues list
-      body: StreamBuilder<List<Clue>>(
-        stream: _repo.streamClues(widget.gameId),
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snap.hasError) {
-            return Center(
-              child: Text(
-                'Error loading clues: ${snap.error}',
-                style: const TextStyle(color: Colors.white),
-              ),
-            );
-          }
-
-          final clues = snap.data ?? const <Clue>[];
-          if (clues.isEmpty) {
-            return const Center(
-              child: Text(
-                'No clues yet. Waiting for host...',
-                style: TextStyle(color: Colors.white70),
-              ),
-            );
-          }
-
-          return ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-            itemCount: clues.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 16),
-            itemBuilder: (context, index) {
-              final clue = clues[index];
-              final heroPrompt = 'prompt-${clue.id}';
-              final isSubmitted = _submitted.contains(clue.id);
-              final submittedUrl = _mySubmissionThumb[clue.id];
-
-              return Card(
-                color: const Color(0xFF5D4BB2),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
+        // Live clues list
+        body: StreamBuilder<List<Clue>>(
+          stream: _repo.streamClues(widget.gameId),
+          builder: (context, snap) {
+            if (snap.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snap.hasError) {
+              return Center(
+                child: Text(
+                  'Error loading clues: ${snap.error}',
+                  style: const TextStyle(color: Colors.white),
                 ),
-                elevation: 4,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // Clue image (tap to expand)
-                      GestureDetector(
-                        onTap: () => _openFullScreenNetwork(clue.imageUrl, heroPrompt),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: AspectRatio(
-                            aspectRatio: 16 / 9,
-                            child: Hero(
-                              tag: heroPrompt,
-                              child: Image.network(
-                                clue.imageUrl,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => const Center(
-                                  child: Text(
-                                    'Image failed to load',
-                                    style: TextStyle(color: Colors.white70),
+              );
+            }
+
+            final clues = snap.data ?? const <Clue>[];
+            if (clues.isEmpty) {
+              return const Center(
+                child: Text(
+                  'No clues yet. Waiting for host...',
+                  style: TextStyle(color: Colors.white70),
+                ),
+              );
+            }
+
+            return ListView.separated(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              itemCount: clues.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 16),
+              itemBuilder: (context, index) {
+                final clue = clues[index];
+                final heroPrompt = 'prompt-${clue.id}';
+                final isSubmitted = _submitted.contains(clue.id);
+                final submittedUrl = _mySubmissionThumb[clue.id];
+
+                return Card(
+                  color: const Color(0xFF5D4BB2),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  elevation: 4,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Clue image (tap to expand)
+                        GestureDetector(
+                          onTap: () => _openFullScreenNetwork(clue.imageUrl, heroPrompt),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: AspectRatio(
+                              aspectRatio: 16 / 9,
+                              child: Hero(
+                                tag: heroPrompt,
+                                child: Image.network(
+                                  clue.imageUrl,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => const Center(
+                                    child: Text(
+                                      'Image failed to load',
+                                      style: TextStyle(color: Colors.white70),
+                                    ),
                                   ),
+                                  loadingBuilder: (context, child, progress) {
+                                    if (progress == null) return child;
+                                    return const Center(child: CircularProgressIndicator());
+                                  },
                                 ),
-                                loadingBuilder: (context, child, progress) {
-                                  if (progress == null) return child;
-                                  return const Center(
-                                      child: CircularProgressIndicator());
-                                },
                               ),
                             ),
                           ),
                         ),
-                      ),
 
-                      const SizedBox(height: 12),
+                        const SizedBox(height: 12),
 
-                      // Submit button (disabled after submitted)
-                      SizedBox(
-                        height: 48,
-                        child: ElevatedButton(
-                          onPressed: (_busy || isSubmitted)
-                              ? null
-                              : () => _submit(
-                            clueId: clue.id,
-                            hostUrl: clue.imageUrl,
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: (_busy || isSubmitted)
-                                ? Colors.grey
-                                : const Color(0xFFFFC943),
-                            foregroundColor: Colors.black,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(30),
+                        // Submit button (disabled after submitted)
+                        SizedBox(
+                          height: 48,
+                          child: ElevatedButton(
+                            onPressed: (_busy || isSubmitted)
+                                ? null
+                                : () => _submit(
+                              clueId: clue.id,
+                              hostUrl: clue.imageUrl,
                             ),
-                            textStyle: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: (_busy || isSubmitted)
+                                  ? Colors.grey
+                                  : const Color(0xFFFFC943),
+                              foregroundColor: Colors.black,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(30),
+                              ),
+                              textStyle: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                          ),
-                          child: Text(isSubmitted ? 'Submitted' : 'Submit'),
-                        ),
-                      ),
-
-                      // Player's own uploaded thumbnail (expandable)
-                      if (submittedUrl != null) ...[
-                        const SizedBox(height: 10),
-                        const Text(
-                          'Your submission',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
+                            child: Text(isSubmitted ? 'Submitted' : 'Submit'),
                           ),
                         ),
-                        const SizedBox(height: 6),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: GestureDetector(
-                            onTap: () => _openFullScreenNetwork(
-                                submittedUrl, 'submission-${clue.id}'),
-                            child: Hero(
-                              tag: 'submission-${clue.id}',
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: Image.network(
-                                  submittedUrl,
-                                  width: 140,
-                                  height: 140,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => const SizedBox(
+
+                        // Player's own uploaded thumbnail (expandable)
+                        if (submittedUrl != null) ...[
+                          const SizedBox(height: 10),
+                          const Text(
+                            'Your submission',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: GestureDetector(
+                              onTap: () => _openFullScreenNetwork(
+                                  submittedUrl, 'submission-${clue.id}'),
+                              child: Hero(
+                                tag: 'submission-${clue.id}',
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Image.network(
+                                    submittedUrl,
                                     width: 140,
                                     height: 140,
-                                    child: Center(
-                                      child: Text(
-                                        'Preview failed',
-                                        style:
-                                        TextStyle(color: Colors.white70),
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => const SizedBox(
+                                      width: 140,
+                                      height: 140,
+                                      child: Center(
+                                        child: Text(
+                                          'Preview failed',
+                                          style: TextStyle(color: Colors.white70),
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -557,15 +613,15 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
                               ),
                             ),
                           ),
-                        ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
-                ),
-              );
-            },
-          );
-        },
+                );
+              },
+            );
+          },
+        ),
       ),
     );
   }
