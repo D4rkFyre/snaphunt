@@ -265,8 +265,16 @@ class GameRepository {
     return null;
   }
 
-  /// Upload a player's submission image and create a submission doc **once**
-  /// per (playerId, clueId). Includes imageUrl on CREATE to satisfy rules.
+  String _withCacheBust(String url) {
+    final sep = url.contains('?') ? '&' : '?';
+    return '$url${sep}v=${DateTime.now().millisecondsSinceEpoch}';
+  }
+
+  /// Upload (or re-upload) a player's submission image to a **single** doc per
+  /// (playerId, clueId). On retake, we overwrite the Storage object and update
+  /// the same submission document, resetting scoring fields and setting
+  /// `status: "pending"`. We also update `imageUrl` with a cache-busting query
+  /// param so the UI refreshes immediately.
   Future<Submission> uploadPlayerSubmission({
     required String gameId,
     required String clueId,
@@ -274,61 +282,57 @@ class GameRepository {
     required File imageFile,
   }) async {
     final submissionId = _submissionIdFor(playerId, clueId);
-    final subRef = FirestoreRefs.submissions(db, gameId).doc(submissionId);
+    final subRef = FirestoreRefs.submissionDoc(db, gameId, submissionId);
 
-    // If it already exists, just return it (prevents duplicates after rejoin)
-    final existing = await subRef.get();
-    if (existing.exists) {
-      final m = existing.data()!;
-      return Submission(
-        id: submissionId,
-        gameId: gameId,
-        clueId: clueId,
-        playerId: playerId,
-        imageUrl: (m['imageUrl'] as String?) ?? '',
-        status: (m['status'] as String?) ?? 'pending',
-        createdAt: _asDateTime(m['createdAt']),
-      );
-    }
-
-    // Upload image first (deterministic path: same id every time)
+    // Upload to a deterministic path so only one blob exists per pair.
     final storageRef =
     storage.ref().child('games/$gameId/submissions/$submissionId.jpg');
     await storageRef.putFile(imageFile);
-    final downloadURL = await storageRef.getDownloadURL();
+    final rawDownloadURL = await storageRef.getDownloadURL();
+    final bustedURL = _withCacheBust(rawDownloadURL);
 
-    // Create payload INCLUDING imageUrl so Firestore "create" rules pass
-    final payload = <String, dynamic>{
-      'gameId': gameId,
-      'clueId': clueId,
-      'playerId': playerId,
-      'imageUrl': downloadURL,               // <-- important for your rules
-      'status': 'pending',
-      'createdAt': FieldValue.serverTimestamp(),
-    };
-
-    // Use a transaction to avoid races: only set if it doesn't exist yet.
     await db.runTransaction((tx) async {
       final snap = await tx.get(subRef);
-      if (snap.exists) return;    // someone else won the race
-      tx.set(subRef, payload);    // counts as CREATE in rules
+      if (snap.exists) {
+        // RETAKE: overwrite fields, keep createdAt, set updatedAt, reset scoring.
+        tx.update(subRef, {
+          'imageUrl': bustedURL,
+          'status': 'pending',
+          'updatedAt': FieldValue.serverTimestamp(),
+          // wipe stale scoring/diagnostics
+          'score': FieldValue.delete(),
+          'components': FieldValue.delete(),
+          'diagnostics': FieldValue.delete(),
+          'scoredAt': FieldValue.delete(),
+        });
+      } else {
+        // FIRST SUBMISSION: set createdAt (and also updatedAt for convenience)
+        tx.set(subRef, {
+          'gameId': gameId,
+          'clueId': clueId,
+          'playerId': playerId,
+          'imageUrl': bustedURL,
+          'status': 'pending',
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
     });
 
-    // Read back (either our create, or the winner of a race)
-    final snap = await subRef.get();
-    final data = snap.data() ?? payload;
-
+    // Return latest snapshot (reflecting upsert)
+    final latest = await subRef.get();
+    final m = latest.data() ?? {};
     return Submission(
       id: submissionId,
       gameId: gameId,
       clueId: clueId,
       playerId: playerId,
-      imageUrl: (data['imageUrl'] as String?) ?? downloadURL,
-      status: (data['status'] as String?) ?? 'pending',
-      createdAt: _asDateTime(data['createdAt']),
+      imageUrl: (m['imageUrl'] as String?) ?? bustedURL,
+      status: (m['status'] as String?) ?? 'pending',
+      createdAt: _asDateTime(m['createdAt']),
+      // (Optional) If your model has updatedAt, add it there too.
     );
   }
-
 
   /// Calls the Firebase HTTPS Function to score a submission via Cloud Run scorer.
   /// The backend Function will update the submission doc with:
@@ -391,7 +395,4 @@ class GameRepository {
 
     return gameRef.set(payload, SetOptions(merge: true));
   }
-
-  }
-
-
+}

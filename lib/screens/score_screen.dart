@@ -5,6 +5,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/screens/home_screen.dart';
+import 'package:snaphunt/widgets/game_nav_bar.dart';
+
 
 class ScoreScreen extends StatefulWidget {
   final String gameId;
@@ -349,6 +351,11 @@ class _ScoreScreenState extends State<ScoreScreen> {
             );
           },
         ),
+        bottomNavigationBar: GameNavBar(
+          current: GameNavTab.none,
+          gameId: widget.gameId,
+        ),
+
       ),
     );
   }

@@ -13,6 +13,7 @@ import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/models/clue_model.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/screens/score_screen.dart';
+import 'package:snaphunt/widgets/game_nav_bar.dart';
 
 class ClueSubmissionScreen extends StatefulWidget {
   const ClueSubmissionScreen({
@@ -587,6 +588,11 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
             ),
             ProgressOverlay(controller: _progress, title: 'Submitting & Scoring'),
           ],
+        ),
+        // ✅ Bottom nav wired here (we are inside the State class → widget.gameId is valid)
+        bottomNavigationBar: GameNavBar(
+          current: GameNavTab.none,
+          gameId: widget.gameId,
         ),
       ),
     );

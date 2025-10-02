@@ -7,7 +7,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/models/game_model.dart'; // enum + parser
 import 'clue_submission_screen.dart';
-import 'host_live_submissions_screen.dart'; // <-- NEW: navigate host here
+import 'host_live_submissions_screen.dart';
+import 'package:snaphunt/widgets/game_nav_bar.dart';
+
 
 /// ---------------------------------------------------------------------------
 /// CreateGameLobbyScreen
@@ -369,6 +371,11 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
           },
         ),
       ),
+      bottomNavigationBar: GameNavBar(
+        current: GameNavTab.none,
+        gameId: widget.gameId,
+      ),
+
     );
   }
 }
