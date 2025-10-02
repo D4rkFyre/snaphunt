@@ -546,7 +546,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
                       ),
                         Text(
                         (radiusDisplay != null)
-                        ? 'Game area radius: ${radiusDisplay}m'
+                        ? 'Game area radius: ${radiusDisplay} meters'
                             : 'Game area not set',
                         style: const TextStyle(
                         fontSize: 20, color: Colors.white),
