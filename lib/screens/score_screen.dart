@@ -1,11 +1,12 @@
 // lib/screens/score_screen.dart
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/screens/home_screen.dart';
+import 'package:snaphunt/widgets/game_nav_bar.dart';
+
 
 class ScoreScreen extends StatefulWidget {
   final String gameId;
@@ -42,10 +43,11 @@ class _ScoreScreenState extends State<ScoreScreen> {
     const darkBg = Color(0xFF3E2C8B);
     const cardBg = Color(0xFF5D4BB2);
 
-    return WillPopScope(
-      onWillPop: () async {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
         _goHome();
-        return false;
       },
       child: Scaffold(
         backgroundColor: darkBg,
@@ -153,29 +155,71 @@ class _ScoreScreenState extends State<ScoreScreen> {
                       );
                     }
 
-                    // Gather raw scores per playerId (host excluded)
-                    final Map<String, List<double>> scores = {};
+                    // --------- Use ONLY the latest submission per (playerId, clueId) ---------
+                    // best[pid][clueId] = score of the LATEST submission
+                    final Map<String, Map<String, double>> best = {};
+
+                    int _extractWhenMillis(Map<String, dynamic> m) {
+                      // Look for common timestamp fields in priority order
+                      final keys = const [
+                        'updatedAt',
+                        'createdAt',
+                        'submittedAt',
+                        'timestamp',
+                        'ts',
+                      ];
+                      for (final k in keys) {
+                        final v = m[k];
+                        if (v == null) continue;
+                        if (v is Timestamp) return v.millisecondsSinceEpoch;
+                        if (v is num) return v.toInt();
+                        if (v is String) {
+                          // try parse ISO8601
+                          try {
+                            return DateTime.parse(v).millisecondsSinceEpoch;
+                          } catch (_) {/* ignore */}
+                        }
+                      }
+                      return 0; // unknown -> treat as oldest
+                    }
+
+                    final Map<String, Map<String, int>> whenMap = {}; // millis
+
                     for (final d in subsSnap.data?.docs ?? const []) {
                       final m = d.data();
+
                       final pid = (m['playerId'] as String?)?.trim() ?? '';
                       if (pid.isEmpty || isHostId(pid)) continue;
 
-                      final sc = (m['score'] as num?)?.toDouble();
-                      if (sc == null) continue;
+                      final clueId = (m['clueId'] as String?)?.trim() ?? '';
+                      if (clueId.isEmpty) continue;
 
-                      (scores[pid] ??= <double>[]).add(sc);
+                      final score = (m['score'] as num?)?.toDouble();
+                      if (score == null) continue;
+
+                      final when = _extractWhenMillis(m);
+
+                      final mp = best.putIfAbsent(pid, () => <String, double>{});
+                      final wp = whenMap.putIfAbsent(pid, () => <String, int>{});
+
+                      final prevWhen = wp[clueId] ?? -1;
+                      if (when >= prevWhen) {
+                        // Replace if newer (or first seen)
+                        wp[clueId] = when;
+                        mp[clueId] = score;
+                      }
                     }
+                    // -------------------------------------------------------------------------
 
                     // Build final rows: average over *totalClues*,
                     // counting missing submissions as 0s.
                     final List<_AvgRow> rows = [];
-                    final ids = scores.keys.toSet()..addAll(roster.keys);
+                    final ids = {...roster.keys, ...best.keys};
 
                     for (final pid in ids) {
                       final label = roster[pid] ?? pid;
 
                       if (totalClues <= 0) {
-                        // No clues? Avg is 0; count 0
                         rows.add(_AvgRow(
                           playerId: pid,
                           name: label,
@@ -185,16 +229,14 @@ class _ScoreScreenState extends State<ScoreScreen> {
                         continue;
                       }
 
-                      final list = scores[pid] ?? const <double>[];
-                      final sum = list.isEmpty
-                          ? 0.0
-                          : list.reduce((a, b) => a + b);
-                      final avg = sum / totalClues; // <-- key change!
+                      final perClue = best[pid] ?? const <String, double>{};
+                      final sum = perClue.values.fold<double>(0.0, (a, b) => a + b);
+                      final avg = sum / totalClues; // missing clues count as 0
                       rows.add(_AvgRow(
                         playerId: pid,
                         name: label,
                         avg: avg,
-                        count: list.length, // number of actual submissions
+                        count: perClue.length, // number of clues actually submitted
                       ));
                     }
 
@@ -309,6 +351,11 @@ class _ScoreScreenState extends State<ScoreScreen> {
             );
           },
         ),
+        bottomNavigationBar: GameNavBar(
+          current: GameNavTab.none,
+          gameId: widget.gameId,
+        ),
+
       ),
     );
   }

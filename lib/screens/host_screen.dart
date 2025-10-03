@@ -4,14 +4,14 @@ import 'dart:math' as math;
 
 import 'lobby_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:snaphunt/screens/score_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/models/game_model.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/services/device_id.dart';
+import 'package:snaphunt/widgets/game_nav_bar.dart';
+
 
 // One-time tutorial memory
 import 'package:shared_preferences/shared_preferences.dart';
@@ -45,7 +45,6 @@ class HostGameScreen extends StatefulWidget {
 }
 
 class _HostGameScreenState extends State<HostGameScreen> {
-  int _selectedIndex = 0;
   bool _busy = false;
   String? _error;
   String? _deviceId;
@@ -295,9 +294,6 @@ class _HostGameScreenState extends State<HostGameScreen> {
     }
   }
 
-
-  void _onItemTapped(int index) => setState(() => _selectedIndex = index);
-
   @override
   Widget build(BuildContext context) {
     final area = _computeBoundingCircle();
@@ -544,16 +540,29 @@ class _HostGameScreenState extends State<HostGameScreen> {
                           ),
                         ],
                       ),
-                        Text(
-                        (radiusDisplay != null)
-                        ? 'Game area radius: ${radiusDisplay}m'
-                            : 'Game area not set',
-                        style: const TextStyle(
-                        fontSize: 20, color: Colors.white),
-                        ),
-
                   ],
                 ),
+                const SizedBox(height: 12),
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black26,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      (radiusDisplay != null)
+                          ? 'Game area radius: ${radiusDisplay} meters'
+                          : 'Game area not set',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+
               ],
 
               const SizedBox(height: 8),
@@ -599,28 +608,8 @@ class _HostGameScreenState extends State<HostGameScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        backgroundColor: const Color(0xFFFFC943),
-        currentIndex: _selectedIndex,
-        onTap: _onItemTapped,
-        items: [
-          BottomNavigationBarItem(
-            icon: SvgPicture.asset('assets/icons/book.svg',
-                color: const Color(0xFF3E2C8B), width: 28),
-            label: '',
-          ),
-          BottomNavigationBarItem(
-            icon: SvgPicture.asset('assets/icons/trophy-fill.svg',
-                color: const Color(0xFF3E2C8B), width: 28),
-            label: '',
-          ),
-          BottomNavigationBarItem(
-            icon: SvgPicture.asset('assets/icons/person-circle.svg',
-                color: const Color(0xFF3E2C8B), width: 28),
-            label: '',
-          ),
-        ],
-      ),
+      bottomNavigationBar: const GameNavBar(current: GameNavTab.none),
+
     );
   }
 }
