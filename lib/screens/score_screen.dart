@@ -7,7 +7,6 @@ import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/screens/home_screen.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
 
-
 class ScoreScreen extends StatefulWidget {
   final String gameId;
   final GameRepository? repository;
@@ -248,97 +247,178 @@ class _ScoreScreenState extends State<ScoreScreen> {
                     });
 
                     if (rows.isEmpty) {
-                      return const Center(
-                        child: Text(
-                          'No scores yet.',
-                          style: TextStyle(color: Colors.white70),
-                        ),
+                      return Column(
+                        children: [
+                          const Expanded(
+                            child: Center(
+                              child: Text(
+                                'No scores yet.',
+                                style: TextStyle(color: Colors.white70),
+                              ),
+                            ),
+                          ),
+                          // Bottom New Game button
+                          SafeArea(
+                            top: false,
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                              child: SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  onPressed: _goHome,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.greenAccent,
+                                    foregroundColor: Colors.black,
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 16, horizontal: 32),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(30),
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    'New Game',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       );
                     }
 
                     final top = rows.take(3).toList();
 
+                    // ---- Main content + bottom button ----
                     return Column(
                       children: [
-                        // Winners block
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: cardBg,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              children: [
-                                Text(
-                                  totalClues > 0
-                                      ? 'Winners'
-                                      : 'Winners',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 18,
+                        // Expandable main content (winners + leaderboard)
+                        Expanded(
+                          child: Column(
+                            children: [
+                              // Winners block
+                              Padding(
+                                padding:
+                                const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: cardBg,
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  padding: const EdgeInsets.all(16),
+                                  child: Column(
+                                    children: [
+                                      const Text(
+                                        'Winners',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 18,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Row(
+                                        mainAxisAlignment:
+                                        MainAxisAlignment.spaceEvenly,
+                                        children: [
+                                          if (top.length >= 2)
+                                            _PodiumTile(rank: 2, row: top[1]),
+                                          _PodiumTile(
+                                              rank: 1,
+                                              row: top[0],
+                                              highlight: true),
+                                          if (top.length >= 3)
+                                            _PodiumTile(rank: 3, row: top[2]),
+                                        ],
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                const SizedBox(height: 12),
-                                Row(
-                                  mainAxisAlignment:
-                                  MainAxisAlignment.spaceEvenly,
-                                  children: [
-                                    if (top.length >= 2)
-                                      _PodiumTile(rank: 2, row: top[1]),
-                                    _PodiumTile(rank: 1, row: top[0], highlight: true),
-                                    if (top.length >= 3)
-                                      _PodiumTile(rank: 3, row: top[2]),
-                                  ],
+                              ),
+
+                              // Full leaderboard
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                      16, 8, 16, 16),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: cardBg,
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    child: ListView.separated(
+                                      padding: const EdgeInsets.fromLTRB(
+                                          12, 8, 12, 12),
+                                      itemCount: rows.length,
+                                      separatorBuilder: (_, __) =>
+                                      const Divider(
+                                          color: Colors.white24, height: 1),
+                                      itemBuilder: (context, i) {
+                                        final r = rows[i];
+                                        return ListTile(
+                                          leading:
+                                          _CircleInitials(name: r.name),
+                                          title: Text(
+                                            r.name,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                          subtitle: Text(
+                                            totalClues > 0
+                                                ? 'Avg across $totalClues clue(s) • ${r.count} submission(s)'
+                                                : 'No clues',
+                                            style: const TextStyle(
+                                                color: Colors.white70),
+                                          ),
+                                          trailing: Text(
+                                            r.avg.toStringAsFixed(0),
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
                         ),
 
-                        // Full leaderboard
-                        Expanded(
+                        // Bottom New Game button (matches other green buttons)
+                        SafeArea(
+                          top: false,
                           child: Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: cardBg,
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: ListView.separated(
-                                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                                itemCount: rows.length,
-                                separatorBuilder: (_, __) =>
-                                const Divider(color: Colors.white24, height: 1),
-                                itemBuilder: (context, i) {
-                                  final r = rows[i];
-                                  return ListTile(
-                                    leading: _CircleInitials(name: r.name),
-                                    title: Text(
-                                      r.name,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                    subtitle: Text(
-                                      totalClues > 0
-                                          ? 'Avg across $totalClues clue(s) • ${r.count} submission(s)'
-                                          : 'No clues',
-                                      style: const TextStyle(color: Colors.white70),
-                                    ),
-                                    trailing: Text(
-                                      r.avg.toStringAsFixed(0),
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  );
-                                },
+                            padding:
+                            const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: _goHome,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.greenAccent,
+                                  foregroundColor: Colors.black,
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 16, horizontal: 32),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(30),
+                                  ),
+                                ),
+                                child: const Text(
+                                  'New Game',
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
@@ -355,7 +435,6 @@ class _ScoreScreenState extends State<ScoreScreen> {
           current: GameNavTab.none,
           gameId: widget.gameId,
         ),
-
       ),
     );
   }
