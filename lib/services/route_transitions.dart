@@ -31,7 +31,7 @@ PageRouteBuilder<T> slideDownFromTop<T>(
       Duration? reverseDuration,
       Curve curve = _kCurve,
       Curve reverseCurve = _kReverseCurve,
-      bool withFade = true, // subtle dissolve on top of the slide
+      bool withFade = false, // subtle dissolve on top of the slide
     }) {
   return PageRouteBuilder<T>(
     transitionDuration: duration ?? _scale(_kSlideInBase),
@@ -59,7 +59,7 @@ PageRouteBuilder<T> slideUpFromBottom<T>(
       Duration? reverseDuration,
       Curve curve = _kCurve,
       Curve reverseCurve = _kReverseCurve,
-      bool withFade = true,
+      bool withFade = false,
     }) {
   return PageRouteBuilder<T>(
     transitionDuration: duration ?? _scale(_kSlideInBase),
@@ -80,7 +80,7 @@ PageRouteBuilder<T> slideUpFromBottom<T>(
 
 /// Alias to match earlier usage
 PageRouteBuilder<T> slideUp<T>(Widget page,
-    {Duration? duration, Duration? reverseDuration, Curve curve = _kCurve, Curve reverseCurve = _kReverseCurve, bool withFade = true}) =>
+    {Duration? duration, Duration? reverseDuration, Curve curve = _kCurve, Curve reverseCurve = _kReverseCurve, bool withFade = false}) =>
     slideUpFromBottom<T>(page, duration: duration, reverseDuration: reverseDuration, curve: curve, reverseCurve: reverseCurve, withFade: withFade);
 
 /// ----------------------
@@ -92,7 +92,7 @@ PageRouteBuilder<T> slideFromRight<T>(
       Duration? reverseDuration,
       Curve curve = _kCurve,
       Curve reverseCurve = _kReverseCurve,
-      bool withFade = true,
+      bool withFade = false,
     }) {
   return PageRouteBuilder<T>(
     transitionDuration: duration ?? _scale(_kSlideInRightBase),

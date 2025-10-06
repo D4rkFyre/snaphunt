@@ -167,6 +167,7 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                 // Use updatedAt so UI reacts immediately to retakes/scores
                 stream: FirestoreRefs
                     .submissions(_repo.db, widget.gameId)
+                    .orderBy('createdAt', descending: true)
                     .orderBy('updatedAt', descending: true)
                     .snapshots(),
                 builder: (context, subsSnap) {
