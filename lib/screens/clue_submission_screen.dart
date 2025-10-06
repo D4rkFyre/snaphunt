@@ -7,22 +7,25 @@ import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'package:snaphunt/widgets/progress_overlay.dart';
+
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/models/clue_model.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/screens/score_screen.dart';
+import 'package:snaphunt/widgets/game_nav_bar.dart';
 
 class ClueSubmissionScreen extends StatefulWidget {
-  final String gameId;
-  final String playerId; // deviceId or nickname
-  final GameRepository? repository; // optional DI for tests
-
   const ClueSubmissionScreen({
     super.key,
     required this.gameId,
     required this.playerId,
     this.repository,
   });
+
+  final String gameId;
+  final String playerId;
+  final GameRepository? repository;
 
   @override
   State<ClueSubmissionScreen> createState() => _ClueSubmissionScreenState();
@@ -33,25 +36,28 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
   late final GameRepository _repo;
   bool _busy = false;
 
+  // Progress overlay controller
+  final _progress = ProgressOverlayController();
+
   // Navigate-on-finish
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _gameSub;
   bool _navigatedToScores = false;
 
-  // Track what's been submitted this session (by clueId)
+  // Track which clues we've already submitted
   final Set<String> _submitted = <String>{};
-  // Store the player's uploaded image URL for thumbnail per clue
   final Map<String, String> _mySubmissionThumb = <String, String>{};
+
+  // ---- Resubmit limits ----
+  static const int _kMaxAttemptsPerClue = 3; // 1 initial + 2 retries
+  final Map<String, int> _attempts = <String, int>{}; // clueId -> attempts so far
 
   @override
   void initState() {
     super.initState();
     _repo = widget.repository ?? GameRepository();
     _prefetchMySubmissions();
-
-    // One-time read in case host already ended game before we arrived.
     _checkFinishedOnce();
 
-    // Live listener to hop to scores as soon as game finishes.
     _gameSub = FirestoreRefs.gameDoc(_repo.db, widget.gameId)
         .snapshots()
         .listen((snap) {
@@ -62,9 +68,144 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
     });
   }
 
+  Future<bool> _confirmLeaveGame() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF3E2C8B),
+        title: const Text(
+          'Leave Game?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'Are you sure you want to leave?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Leave'),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
+  Future<void> _prefetchMySubmissions() async {
+    try {
+      final q = await FirestoreRefs
+          .submissions(_repo.db, widget.gameId)
+          .where('playerId', isEqualTo: widget.playerId)
+          .get();
+
+      if (!context.mounted) return;
+
+      final submitted = <String>{};
+      final thumbs = <String, String>{};
+      final attempts = <String, int>{};
+
+      for (final doc in q.docs) {
+        final data = doc.data();
+        final clueId = data['clueId'] as String?;
+        final imageUrl = data['imageUrl'] as String?;
+        if (clueId != null) {
+          submitted.add(clueId);
+          attempts[clueId] = (attempts[clueId] ?? 0) + 1;
+          if (imageUrl != null) thumbs[clueId] = imageUrl;
+        }
+      }
+
+      setState(() {
+        _submitted
+          ..clear()
+          ..addAll(submitted);
+        _mySubmissionThumb
+          ..clear()
+          ..addAll(thumbs);
+        _attempts
+          ..clear()
+          ..addAll(attempts);
+      });
+    } catch (_) {/* non-fatal */}
+  }
+
+  // ---------------------- Location helpers ----------------------
+  Future<Position?> _getPlayerPosition() async {
+    final servicesOn = await Geolocator.isLocationServiceEnabled();
+    if (!servicesOn) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Location services are disabled.')),
+        );
+      }
+      return null;
+    }
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.deniedForever) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Location permissions are permanently denied.')),
+        );
+      }
+      return null;
+    }
+
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission != LocationPermission.always &&
+          permission != LocationPermission.whileInUse) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Location permission denied.')),
+          );
+        }
+        return null;
+      }
+    }
+
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.best,
+      );
+      return pos;
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not get location: $e')),
+        );
+      }
+      return null;
+    }
+  }
+
+  double _haversineMeters({
+    required double lat1,
+    required double lng1,
+    required double lat2,
+    required double lng2,
+  }) {
+    const earthRadiusM = 6371000.0;
+    final dLat = (lat2 - lat1) * (math.pi / 180.0);
+    final dLng = (lng2 - lng1) * (math.pi / 180.0);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(lat1 * (math.pi / 180.0)) *
+            math.cos(lat2 * (math.pi / 180.0)) *
+            math.sin(dLng / 2) * math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadiusM * c;
+  }
+
+  // ---------------------- Flow helpers ----------------------
   Future<void> _checkFinishedOnce() async {
     try {
       final snap = await FirestoreRefs.gameDoc(_repo.db, widget.gameId).get();
+      if (!context.mounted) return;
       final status = (snap.data()?['status'] as String?)?.trim() ?? 'waiting';
       if (status == 'finished') {
         _goToScoresOnce();
@@ -83,124 +224,18 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
   void _goToScoresOnce() {
     if (!mounted || _navigatedToScores) return;
     _navigatedToScores = true;
-    // Give a tiny UX hint
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Game ended! Showing final scores…')),
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!context.mounted) return;
       Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => ScoreScreen(gameId: widget.gameId)),
+        MaterialPageRoute(
+          builder: (_) => ScoreScreen(gameId: widget.gameId),
+        ),
             (route) => false,
       );
     });
-  }
-
-  // ---------- Leave-game confirmation ----------
-  Future<bool> _confirmLeaveGame() async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF241A5E),
-        title: const Text('Leave the game?', style: TextStyle(color: Colors.white)),
-        content: const Text(
-          'Are you sure you want to leave this game? You may lose your place.',
-          style: TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Stay'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Leave'),
-          ),
-        ],
-      ),
-    );
-    return result == true;
-  }
-
-  Future<void> _prefetchMySubmissions() async {
-    try {
-      final q = await FirestoreRefs
-          .submissions(_repo.db, widget.gameId)
-          .where('playerId', isEqualTo: widget.playerId)
-          .get();
-
-      final submitted = <String>{};
-      final thumbs = <String, String>{};
-
-      for (final d in q.docs) {
-        final data = d.data();
-        final clueId = data['clueId'] as String?;
-        final imageUrl = data['imageUrl'] as String?;
-        if (clueId != null) {
-          submitted.add(clueId);
-          if (imageUrl != null) thumbs[clueId] = imageUrl;
-        }
-      }
-
-      if (!mounted) return;
-      setState(() {
-        _submitted
-          ..clear()
-          ..addAll(submitted);
-        _mySubmissionThumb
-          ..clear()
-          ..addAll(thumbs);
-      });
-    } catch (_) {/* non-fatal */}
-  }
-
-  // ---------------------- Location helpers ----------------------
-  Future<Position?> _getPlayerPosition() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      await Geolocator.openLocationSettings();
-      serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return null;
-    }
-
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) return null;
-    }
-    if (permission == LocationPermission.deniedForever) {
-      return null;
-    }
-
-    try {
-      return await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 12),
-      );
-    } catch (_) {
-      try {
-        return await Geolocator.getLastKnownPosition();
-      } catch (_) {
-        return null;
-      }
-    }
-  }
-
-  double _deg2rad(double d) => d * math.pi / 180.0;
-  double _haversineMeters({
-    required double lat1,
-    required double lng1,
-    required double lat2,
-    required double lng2,
-  }) {
-    const R = 6371000.0; // meters
-    final dLat = _deg2rad(lat2 - lat1);
-    final dLng = _deg2rad(lng2 - lng1);
-    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
-        math.cos(_deg2rad(lat1)) * math.cos(_deg2rad(lat2)) *
-            math.sin(dLng / 2) * math.sin(dLng / 2);
-    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
-    return R * c;
   }
 
   // ---------------------- Submit flow ----------------------
@@ -220,17 +255,16 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.photo_library, color: Colors.white),
-              title: const Text('Choose from Gallery',
-                  style: TextStyle(color: Colors.white)),
-              onTap: () => Navigator.of(ctx).pop(ImageSource.gallery),
-            ),
-            const Divider(height: 0, color: Colors.white24),
-            ListTile(
               leading: const Icon(Icons.photo_camera, color: Colors.white),
-              title: const Text('Take a Photo', style: TextStyle(color: Colors.white)),
+              title: const Text('Camera', style: TextStyle(color: Colors.white)),
               onTap: () => Navigator.of(ctx).pop(ImageSource.camera),
             ),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Colors.white),
+              title: const Text('Gallery', style: TextStyle(color: Colors.white)),
+              onTap: () => Navigator.of(ctx).pop(ImageSource.gallery),
+            ),
+            const SizedBox(height: 8),
           ],
         ),
       ),
@@ -249,65 +283,54 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
     double? centerLat, centerLng, radiusMeters;
     try {
       final gameSnap = await FirestoreRefs.gameDoc(_repo.db, widget.gameId).get();
-      final data = gameSnap.data();
-      if (data != null) {
-        if (data['centerLat'] != null &&
-            data['centerLng'] != null &&
-            data['radiusMeters'] != null) {
-          centerLat = (data['centerLat'] as num).toDouble();
-          centerLng = (data['centerLng'] as num).toDouble();
-          radiusMeters = (data['radiusMeters'] as num).toDouble();
+      if (!context.mounted) return;
+      final data = gameSnap.data() ?? {};
+      final fence = data['geofence'] as Map?;
+      if (fence != null && fence['type'] == 'circle') {
+        final center = fence['center'] as Map?;
+        if (center != null) {
+          centerLat = (center['lat'] as num?)?.toDouble();
+          centerLng = (center['lng'] as num?)?.toDouble();
+          radiusMeters = (fence['radiusMeters'] as num?)?.toDouble();
         }
       }
-    } catch (_) {}
-
-    if (centerLat != null && centerLng != null && radiusMeters != null) {
-      final playerPos = await _getPlayerPosition();
-      if (playerPos == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Location unavailable — proceeding without area check.')),
-          );
-        }
-      } else {
-        final userLat = playerPos.latitude;
-        final userLng = playerPos.longitude;
-        final dist = _haversineMeters(
-          lat1: userLat, lng1: userLng, lat2: centerLat, lng2: centerLng,
-        );
-        if (dist > radiusMeters) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('You’re outside the game area (${dist.toStringAsFixed(0)}m > ${radiusMeters.toStringAsFixed(0)}m).'),
-                duration: const Duration(seconds: 4),
-              ),
-            );
-          }
-          return;
-        } else {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Inside game area (~${dist.toStringAsFixed(0)}m to center)'),
-                duration: const Duration(seconds: 2),
-              ),
-            );
-          }
-        }
-      }
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No game area set — normal submission.')),
-        );
-      }
+    } catch (_) {
+      // ignore
     }
 
-    // ---------- Upload flow ----------
-    _showUploadingDialog();
+    if (centerLat != null && centerLng != null && radiusMeters != null) {
+      final pos = await _getPlayerPosition();
+      if (pos == null) return;
+
+      // promote to local non-nullables (no !)
+      final cLat = centerLat;
+      final cLng = centerLng;
+      final r = radiusMeters;
+
+      final dist = _haversineMeters(
+        lat1: pos.latitude,
+        lng1: pos.longitude,
+        lat2: cLat,
+        lng2: cLng,
+      );
+      if (dist > r) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('You are outside the game area (${dist.toStringAsFixed(0)}m away).')),
+          );
+        }
+        return;
+      }
+    }
+    // -----------------------------------------------
+
+    // Start overlay & flag
+    _progress.show();
+    _progress.addStep('Uploading photo…');
     setState(() => _busy = true);
+
     try {
+      // Upload image (assume non-nullables per your model)
       final submission = await _repo.uploadPlayerSubmission(
         gameId: widget.gameId,
         clueId: clueId,
@@ -315,98 +338,74 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
         imageFile: File(picked.path),
       );
 
-      if (!mounted) return;
+      if (!context.mounted) return;
 
-      // Close uploading dialog
-      Navigator.of(context).pop();
+      _progress.addStep('Upload complete.');
+      _progress.addStep('Submitting for scoring…');
 
-      // Mark this clue as submitted and store the image URL for thumbnail
       setState(() {
         _submitted.add(clueId);
-        _mySubmissionThumb[clueId] = submission.imageUrl;
+        _mySubmissionThumb[clueId] = submission.imageUrl; // non-null
+
+        // increment attempts
+        final nextCount = (_attempts[clueId] ?? 0) + 1;
+        _attempts[clueId] = nextCount;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Submission uploaded!')),
-      );
-
-      // Begin scoring via HTTPS Function
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Scoring…')),
-        );
-      }
-
+      // Kick off scoring (no score leaks here)
       try {
         await _repo.scoreSubmission(
           gameId: widget.gameId,
-          submissionId: submission.id,
+          submissionId: submission.id,     // non-null
           hostUrl: hostUrl,
-          playerUrl: submission.imageUrl,
+          playerUrl: submission.imageUrl,  // non-null
         );
 
-        // Try to read score once from Firestore (optional, best-effort).
-        double? score;
-        try {
-          final snap = await FirestoreRefs
-              .submissions(_repo.db, widget.gameId)
-              .doc(submission.id)
-              .get();
-          final data = snap.data() as Map<String, dynamic>?;
-          if (data != null && data['score'] != null) {
-            score = (data['score'] as num).toDouble();
-          }
-        } catch (_) {}
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(score != null ? 'Scored! ${score!.toStringAsFixed(0)}' : 'Scored!')),
-          );
+        if (context.mounted) {
+          _progress.addStep('Scoring request accepted.');
         }
       } catch (e) {
-        if (mounted) {
+        if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Scoring failed: $e')),
           );
+          _progress.addStep('Scoring failed. Please retry.');
         }
       }
     } catch (e) {
-      if (mounted) {
-        Navigator.of(context).pop();
+      if (context.mounted) {
+        _progress.hide();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Upload failed: $e')),
         );
       }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (context.mounted) {
+        setState(() => _busy = false);
+        _progress.hide();
+      }
     }
-  }
-
-  void _showUploadingDialog() {
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const _UploadingDialog(),
-    );
-  }
-
-  void _openFullScreenNetwork(String url, String heroTag) {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) => _FullScreenPhoto(networkUrl: url, heroTag: heroTag),
-        transitionsBuilder: (_, animation, __, child) =>
-            FadeTransition(opacity: animation, child: child),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     const darkBg = Color(0xFF3E2C8B);
     const accent = Color(0xFFFFC943);
+    const accentDarker = Color(0xFFE0B23C); // slightly darker for resubmits
 
-    return WillPopScope( // confirm on Android back
-      onWillPop: () async => await _confirmLeaveGame(),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return; // system already handled it
+
+        // snapshot navigator before the async gap to keep the analyzer happy
+        final navigator = Navigator.of(context);
+
+        final leave = await _confirmLeaveGame();
+        if (leave && context.mounted) {
+          navigator.maybePop();
+        }
+      },
       child: Scaffold(
         backgroundColor: darkBg,
         endDrawer: Drawer(
@@ -415,279 +414,248 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
             padding: EdgeInsets.zero,
             children: const [
               DrawerHeader(
-                decoration: BoxDecoration(color: accent),
-                child: Text(
-                  'Menu',
-                  style: TextStyle(
-                    color: Colors.black,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              ListTile(
-                leading: Icon(Icons.person, color: Colors.white),
-                title: Text('Profile', style: TextStyle(color: Colors.white)),
-              ),
-              ListTile(
-                leading: Icon(Icons.settings, color: Colors.white),
-                title: Text('Settings', style: TextStyle(color: Colors.white)),
+                decoration: BoxDecoration(color: Color(0xFF2E1F66)),
+                child: Text('Menu', style: TextStyle(color: Colors.white)),
               ),
             ],
           ),
         ),
         appBar: AppBar(
           backgroundColor: darkBg,
-          elevation: 0,
-          centerTitle: true,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
-            tooltip: 'Back',
-            onPressed: () async {
-              if (await _confirmLeaveGame()) {
-                if (!mounted) return;
-                Navigator.of(context).pop();
-              }
-            },
-          ),
-          title: const Text(
-            'Clues',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+          title: const Text('Submit Your Photos'),
           actions: [
-            Builder(
-              builder: (ctx) => IconButton(
-                icon: const Icon(Icons.person, color: Colors.white),
-                tooltip: 'Menu',
-                onPressed: () => Scaffold.of(ctx).openEndDrawer(),
-              ),
+            IconButton(
+              icon: const Icon(Icons.help_outline),
+              onPressed: () {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Scores are revealed at the end of the game.')),
+                );
+              },
             ),
           ],
         ),
+        body: Stack(
+          children: [
+            StreamBuilder<List<Clue>>(
+              stream: _repo.streamClues(widget.gameId),
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snap.hasError) {
+                  return Center(
+                    child: Text(
+                      'Error loading clues: ${snap.error}',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  );
+                }
 
-        // Live clues list
-        body: StreamBuilder<List<Clue>>(
-          stream: _repo.streamClues(widget.gameId),
-          builder: (context, snap) {
-            if (snap.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (snap.hasError) {
-              return Center(
-                child: Text(
-                  'Error loading clues: ${snap.error}',
-                  style: const TextStyle(color: Colors.white),
-                ),
-              );
-            }
+                final clues = snap.data ?? const <Clue>[];
+                if (clues.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'No clues yet. Please wait for the host.',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  );
+                }
 
-            final clues = snap.data ?? const <Clue>[];
-            if (clues.isEmpty) {
-              return const Center(
-                child: Text(
-                  'No clues yet. Waiting for host...',
-                  style: TextStyle(color: Colors.white70),
-                ),
-              );
-            }
+                return ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: clues.length,
+                  itemBuilder: (context, i) {
+                    final clue = clues[i];
+                    final clueId = clue.id;        // non-nullable in your model
+                    final hostUrl = clue.imageUrl; // non-nullable in your model
+                    final myThumb = _mySubmissionThumb[clueId];
 
-            return ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-              itemCount: clues.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 16),
-              itemBuilder: (context, index) {
-                final clue = clues[index];
-                final heroPrompt = 'prompt-${clue.id}';
-                final isSubmitted = _submitted.contains(clue.id);
-                final submittedUrl = _mySubmissionThumb[clue.id];
+                    final heroPrompt = 'clue_prompt_$clueId';
+                    final heroThumb = 'thumb_$clueId';
 
-                return Card(
-                  color: const Color(0xFF5D4BB2),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  elevation: 4,
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // Clue image (tap to expand)
-                        GestureDetector(
-                          onTap: () => _openFullScreenNetwork(clue.imageUrl, heroPrompt),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: AspectRatio(
+                    // attempts & button state
+                    final attempts = _attempts[clueId] ?? 0;       // 0 until first upload
+                    final hasSubmitted = attempts > 0;
+                    final remainingRetries = hasSubmitted
+                        ? (_kMaxAttemptsPerClue - attempts)
+                        : 0;
+                    final isOutOfRetries = hasSubmitted && remainingRetries <= 0;
+
+                    return Card(
+                      color: const Color(0xFF2E1F66),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      margin: const EdgeInsets.only(bottom: 16),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            AspectRatio(
                               aspectRatio: 16 / 9,
-                              child: Hero(
-                                tag: heroPrompt,
-                                child: Image.network(
-                                  clue.imageUrl,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => const Center(
-                                    child: Text(
-                                      'Image failed to load',
-                                      style: TextStyle(color: Colors.white70),
+                              child: GestureDetector(
+                                onTap: () => _openFullScreenNetwork(hostUrl, heroPrompt, title: 'Host Photo'),
+                                child: Hero(
+                                  tag: heroPrompt,
+                                  child: Image.network(
+                                    hostUrl,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => const Center(
+                                      child: Text(
+                                        'Image failed to load',
+                                        style: TextStyle(color: Colors.white70),
+                                      ),
                                     ),
+                                    loadingBuilder: (context, child, progress) {
+                                      if (progress == null) return child;
+                                      return const Center(child: CircularProgressIndicator());
+                                    },
                                   ),
-                                  loadingBuilder: (context, child, progress) {
-                                    if (progress == null) return child;
-                                    return const Center(child: CircularProgressIndicator());
-                                  },
                                 ),
                               ),
                             ),
-                          ),
-                        ),
-
-                        const SizedBox(height: 12),
-
-                        // Submit button (disabled after submitted)
-                        SizedBox(
-                          height: 48,
-                          child: ElevatedButton(
-                            onPressed: (_busy || isSubmitted)
-                                ? null
-                                : () => _submit(
-                              clueId: clue.id,
-                              hostUrl: clue.imageUrl,
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: (_busy || isSubmitted)
-                                  ? Colors.grey
-                                  : const Color(0xFFFFC943),
-                              foregroundColor: Colors.black,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(30),
-                              ),
-                              textStyle: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Match the above photo',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 16,
                               ),
                             ),
-                            child: Text(isSubmitted ? 'Submitted' : 'Submit'),
-                          ),
-                        ),
-
-                        // Player's own uploaded thumbnail (expandable)
-                        if (submittedUrl != null) ...[
-                          const SizedBox(height: 10),
-                          const Text(
-                            'Your submission',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: GestureDetector(
-                              onTap: () => _openFullScreenNetwork(
-                                  submittedUrl, 'submission-${clue.id}'),
-                              child: Hero(
-                                tag: 'submission-${clue.id}',
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: Image.network(
-                                    submittedUrl,
-                                    width: 140,
-                                    height: 140,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => const SizedBox(
-                                      width: 140,
-                                      height: 140,
-                                      child: Center(
-                                        child: Text(
-                                          'Preview failed',
-                                          style: TextStyle(color: Colors.white70),
-                                        ),
+                            const SizedBox(height: 8),
+                            if (myThumb != null)
+                              Center(
+                                child: GestureDetector(
+                                  onTap: () => _openFullScreenNetwork(myThumb, heroThumb, title: 'Your Photo'),
+                                  child: Hero(
+                                    tag: heroThumb,
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: SizedBox(
+                                        height: 120,
+                                        width: 120,
+                                        child: Image.network(myThumb, fit: BoxFit.cover),
                                       ),
                                     ),
                                   ),
                                 ),
                               ),
+
+                            // Compare button (only when submission exists)
+                            if (myThumb != null) ...[
+                              const SizedBox(height: 8),
+                              Align(
+                                alignment: Alignment.center,
+                                child: TextButton.icon(
+                                  onPressed: () => _openCompare(hostUrl, myThumb, heroPrompt, heroThumb),
+                                  icon: const Icon(Icons.compare),
+                                  label: const Text('Compare Images'),
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ],
+
+                            const SizedBox(height: 12),
+                            ElevatedButton.icon(
+                              onPressed: _busy || isOutOfRetries
+                                  ? null
+                                  : () => _submit(clueId: clueId, hostUrl: hostUrl),
+                              icon: const Icon(Icons.photo_camera),
+                              label: Text(
+                                hasSubmitted
+                                    ? (isOutOfRetries
+                                    ? 'No retries left'
+                                    : 'Resubmit Photo (${remainingRetries} left)')
+                                    : 'Submit Photo',
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: hasSubmitted ? accentDarker : accent,
+                                foregroundColor: Colors.black87,
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
                             ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 );
               },
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
-/// Centered uploading popup
-class _UploadingDialog extends StatelessWidget {
-  const _UploadingDialog();
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: const Color(0xFF3E2C8B),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 48),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text(
-              'Uploading your photo....',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
             ),
+            ProgressOverlay(controller: _progress, title: 'Submitting & Scoring'),
           ],
         ),
+        // ✅ Bottom nav wired here (we are inside the State class → widget.gameId is valid)
+        bottomNavigationBar: GameNavBar(
+          current: GameNavTab.none,
+          gameId: widget.gameId,
+        ),
+      ),
+    );
+  }
+
+  void _openFullScreenNetwork(String url, String heroTag, {required String title}) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _FullScreenNetworkImage(
+          url: url,
+          heroTag: heroTag,
+          title: title,
+        ),
+      ),
+    );
+  }
+
+  void _openCompare(String hostUrl, String playerUrl, String hostHero, String playerHero) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _CompareImagesScreen(
+          hostUrl: hostUrl,
+          playerUrl: playerUrl,
+          hostHero: hostHero,
+          playerHero: playerHero,
+        ),
       ),
     );
   }
 }
 
-// Full-screen image viewer (asset, file, or network) with pinch-to-zoom
-class _FullScreenPhoto extends StatelessWidget {
-  const _FullScreenPhoto({
+class _FullScreenNetworkImage extends StatelessWidget {
+  const _FullScreenNetworkImage({
+    required this.url,
     required this.heroTag,
-    this.assetPath,
-    this.filePath,
-    this.networkUrl,
-  }) : assert(assetPath != null || filePath != null || networkUrl != null,
-  'Provide an image source');
-
+    required this.title,
+  });
+  final String url;
   final String heroTag;
-  final String? assetPath;
-  final String? filePath;
-  final String? networkUrl;
+  final String title;
 
   @override
   Widget build(BuildContext context) {
-    final Widget image = assetPath != null
-        ? Image.asset(assetPath!, fit: BoxFit.contain)
-        : filePath != null
-        ? Image.file(File(filePath!), fit: BoxFit.contain)
-        : Image.network(networkUrl!, fit: BoxFit.contain);
+    final image = Image.network(
+      url,
+      fit: BoxFit.contain,
+      errorBuilder: (_, __, ___) => const Center(
+        child: Text(
+          'Image failed to load',
+          style: TextStyle(color: Colors.white70),
+        ),
+      ),
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) return child;
+        return const Center(child: CircularProgressIndicator());
+      },
+    );
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color(0xFF3E2C8B),
       appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        elevation: 0,
+        backgroundColor: const Color(0xFF3E2C8B),
+        title: Text(title),
       ),
       body: Center(
         child: Hero(
@@ -698,6 +666,104 @@ class _FullScreenPhoto extends StatelessWidget {
             child: image,
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _CompareImagesScreen extends StatelessWidget {
+  const _CompareImagesScreen({
+    required this.hostUrl,
+    required this.playerUrl,
+    required this.hostHero,
+    required this.playerHero,
+  });
+
+  final String hostUrl;
+  final String playerUrl;
+  final String hostHero;
+  final String playerHero;
+
+  @override
+  Widget build(BuildContext context) {
+    const darkBg = Color(0xFF3E2C8B);
+
+    Widget zoomable(String url, {String? hero}) {
+      final img = Image.network(
+        url,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => const Center(
+          child: Text('Image failed to load', style: TextStyle(color: Colors.white70)),
+        ),
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return const Center(child: CircularProgressIndicator());
+        },
+      );
+      final viewer = InteractiveViewer(
+        minScale: 0.5,
+        maxScale: 4.0,
+        child: img,
+      );
+      return hero == null ? viewer : Hero(tag: hero, child: viewer);
+    }
+
+    return Scaffold(
+      backgroundColor: darkBg,
+      appBar: AppBar(
+        backgroundColor: darkBg,
+        title: const Text('Compare Images'),
+      ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isWide = constraints.maxWidth >= 700;
+
+          if (isWide) {
+            // Side-by-side on wider layouts
+            return Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Text('Host Photo', style: TextStyle(color: Colors.white70)),
+                      ),
+                      Expanded(child: Center(child: zoomable(hostUrl, hero: hostHero))),
+                    ],
+                  ),
+                ),
+                const VerticalDivider(width: 1, thickness: 1, color: Colors.black26),
+                Expanded(
+                  child: Column(
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Text('Your Photo', style: TextStyle(color: Colors.white70)),
+                      ),
+                      Expanded(child: Center(child: zoomable(playerUrl, hero: playerHero))),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }
+
+          // Stacked on phones / narrow
+          return ListView(
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 12),
+                child: Center(child: Text('Host', style: TextStyle(color: Colors.white70))),
+              ),
+              SizedBox(height: constraints.maxHeight * 0.45, child: zoomable(hostUrl, hero: hostHero)),
+              const Divider(height: 16, thickness: 1, color: Colors.black26),
+              const Center(child: Text('Your Submission', style: TextStyle(color: Colors.white70))),
+              SizedBox(height: constraints.maxHeight * 0.45, child: zoomable(playerUrl, hero: playerHero)),
+              const SizedBox(height: 12),
+            ],
+          );
+        },
       ),
     );
   }

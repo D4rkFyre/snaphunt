@@ -7,6 +7,7 @@ import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/models/clue_model.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/screens/score_screen.dart';
+import 'package:snaphunt/widgets/game_nav_bar.dart';
 
 class HostLiveSubmissionsScreen extends StatefulWidget {
   final String gameId;
@@ -161,9 +162,10 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
               }
 
               return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                // Use updatedAt so UI reacts immediately to retakes/scores
                 stream: FirestoreRefs
                     .submissions(_repo.db, widget.gameId)
-                    .orderBy('createdAt', descending: false)
+                    .orderBy('updatedAt', descending: true)
                     .snapshots(),
                 builder: (context, subsSnap) {
                   if (subsSnap.connectionState == ConnectionState.waiting) {
@@ -178,28 +180,59 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                     );
                   }
 
-                  // Map<clueId, Map<playerId, submissionData>>, skipping host submissions.
-                  final Map<String, Map<String, Map<String, dynamic>>> byClueByPlayer = {};
+                  // ---- Pick the LATEST submission per (clueId, playerId)
+                  // Use submission time (createdAt/submittedAt/timestamp/ts), not updatedAt,
+                  // so an older doc updated later won't override a newer submission.
+                  int _extractSubmissionMillis(Map<String, dynamic> m) {
+                    final keys = const ['createdAt', 'submittedAt', 'timestamp', 'ts'];
+                    for (final k in keys) {
+                      final v = m[k];
+                      if (v == null) continue;
+                      if (v is Timestamp) return v.millisecondsSinceEpoch;
+                      if (v is num) return v.toInt();
+                      if (v is String) {
+                        try {
+                          return DateTime.parse(v).millisecondsSinceEpoch;
+                        } catch (_) {/* ignore */}
+                      }
+                    }
+                    return 0;
+                  }
+
+                  final Map<String, Map<String, Map<String, dynamic>>> latestByClueByPlayer = {};
+                  final Map<String, Map<String, int>> whenMap = {}; // clueId -> playerId -> ms
+
                   for (final d in subsSnap.data?.docs ?? const []) {
-                    final Map<String, dynamic> m = d.data();
-                    final clueId = m['clueId'] as String?;
+                    final m = d.data();
+
+                    final clueId = (m['clueId'] as String?)?.trim();
                     final playerId = (m['playerId'] as String?)?.trim() ?? '';
-                    if (clueId == null || playerId.isEmpty) continue;
-                    if (_isHostId(playerId)) continue; // ignore host
-                    (byClueByPlayer[clueId] ??= {})[playerId] = {...m, 'id': d.id};
+                    if (clueId == null || clueId.isEmpty || playerId.isEmpty) continue;
+                    if (_isHostId(playerId)) continue; // ignore host submissions
+
+                    final when = _extractSubmissionMillis(m);
+                    final wp = (whenMap[clueId] ??= <String, int>{});
+                    final prev = wp[playerId] ?? -1;
+                    if (when >= prev) {
+                      wp[playerId] = when;
+                      (latestByClueByPlayer[clueId] ??= {})[playerId] = {
+                        ...m,
+                        'id': d.id,
+                      };
+                    }
                   }
 
                   // ----- Completion logic for the End Game button -----
                   // 1) Every clue has at least one submission?
                   final allCluesHaveOne = clues.every(
-                        (c) => (byClueByPlayer[c.id]?.isNotEmpty ?? false),
+                        (c) => (latestByClueByPlayer[c.id]?.isNotEmpty ?? false),
                   );
 
                   // 2) Have ALL (non-host) players submitted for EVERY clue?
                   bool everyoneSubmittedAll = false;
                   if (roster.isNotEmpty) {
                     everyoneSubmittedAll = clues.every((c) {
-                      final count = byClueByPlayer[c.id]?.length ?? 0;
+                      final count = latestByClueByPlayer[c.id]?.length ?? 0;
                       return count >= roster.length;
                     });
                   }
@@ -214,7 +247,7 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                           itemBuilder: (context, index) {
                             final clue = clues[index];
                             final clueSubs =
-                                byClueByPlayer[clue.id] ?? const <String, Map>{};
+                                latestByClueByPlayer[clue.id] ?? const <String, Map>{};
 
                             // Merge roster with any submitters not in roster.
                             final merged = <String, _RosterEntry>{
@@ -224,12 +257,15 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                               merged.putIfAbsent(
                                   pid, () => _RosterEntry(id: pid, label: pid));
                             }
-                            final finalRoster = merged.values.toList(growable: false);
+                            final finalRoster =
+                            merged.values.toList(growable: false);
 
                             final submittedCount = clueSubs.length;
                             final totalCount = finalRoster.isNotEmpty
                                 ? finalRoster.length
                                 : submittedCount;
+
+                            final hostHeroTag = 'host-${clue.id}';
 
                             return Container(
                               decoration: BoxDecoration(
@@ -246,7 +282,8 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                               child: Padding(
                                 padding: const EdgeInsets.all(12),
                                 child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  crossAxisAlignment:
+                                  CrossAxisAlignment.stretch,
                                   children: [
                                     Row(
                                       children: [
@@ -278,28 +315,55 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                                     ),
                                     const SizedBox(height: 8),
 
+                                    // Host clue image → tap to fullscreen (Hero)
                                     ClipRRect(
                                       borderRadius: BorderRadius.circular(12),
                                       child: AspectRatio(
                                         aspectRatio: 16 / 9,
-                                        child: Image.network(
-                                          clue.imageUrl,
-                                          fit: BoxFit.cover,
-                                          errorBuilder: (_, __, ___) =>
-                                          const Center(
-                                            child: Text(
-                                              'Image failed to load',
-                                              style: TextStyle(
-                                                  color: Colors.white70),
+                                        child: GestureDetector(
+                                          onTap: () {
+                                            Navigator.of(context).push(
+                                              PageRouteBuilder(
+                                                pageBuilder: (_, __, ___) =>
+                                                    _FullScreenPhoto(
+                                                      heroTag: hostHeroTag,
+                                                      networkUrl: clue.imageUrl,
+                                                      caption: 'Host Photo',
+                                                    ),
+                                                transitionsBuilder:
+                                                    (_, animation, __, child) =>
+                                                    FadeTransition(
+                                                      opacity: animation,
+                                                      child: child,
+                                                    ),
+                                              ),
+                                            );
+                                          },
+                                          child: Hero(
+                                            tag: hostHeroTag,
+                                            child: Image.network(
+                                              clue.imageUrl,
+                                              fit: BoxFit.cover,
+                                              errorBuilder: (_, __, ___) =>
+                                              const Center(
+                                                child: Text(
+                                                  'Image failed to load',
+                                                  style: TextStyle(
+                                                      color: Colors.white70),
+                                                ),
+                                              ),
+                                              loadingBuilder:
+                                                  (context, child, progress) {
+                                                if (progress == null) {
+                                                  return child;
+                                                }
+                                                return const Center(
+                                                  child:
+                                                  CircularProgressIndicator(),
+                                                );
+                                              },
                                             ),
                                           ),
-                                          loadingBuilder:
-                                              (context, child, progress) {
-                                            if (progress == null) return child;
-                                            return const Center(
-                                                child:
-                                                CircularProgressIndicator());
-                                          },
                                         ),
                                       ),
                                     ),
@@ -362,7 +426,8 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                                   ),
                                 );
                                 if (ok != true) {
-                                  debugPrint('[EndGame] Cancelled by host');
+                                  debugPrint(
+                                      '[EndGame] Cancelled by host');
                                   return;
                                 }
                               }
@@ -386,10 +451,12 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                                 _goToScoresOnce(); // one-way exit
                               } catch (e) {
                                 if (!mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
+                                ScaffoldMessenger.of(context)
+                                    .showSnackBar(
                                   SnackBar(
-                                      content: Text(
-                                          'Failed to end game: $e')),
+                                    content: Text(
+                                        'Failed to end game: $e'),
+                                  ),
                                 );
                               }
                             }
@@ -419,12 +486,16 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
           );
         },
       ),
+      bottomNavigationBar: GameNavBar(
+        current: GameNavTab.none,
+        gameId: widget.gameId,
+      ),
     );
   }
 }
 
 class _RosterEntry {
-  final String id;    // stable key (prefer deviceId or unique name)
+  final String id; // stable key (prefer deviceId or unique name)
   final String label; // display name
   const _RosterEntry({required this.id, required this.label});
 }
@@ -459,15 +530,18 @@ class _PlayerGallery extends StatelessWidget {
           label: r.label,
           imageUrl: sub?['imageUrl'] as String?,
           heroTag: '$heroPrefix-${r.id}',
+          score: (sub?['score'] as num?)?.toDouble(),
         ));
       }
     } else {
+      // Fallback: no roster → iterate known submitters
       submissionsForClue.forEach((pid, sub) {
         tiles.add(_PlayerTile(
           playerId: pid,
           label: pid,
           imageUrl: sub['imageUrl'] as String?,
           heroTag: '$heroPrefix-$pid',
+          score: (sub['score'] as num?)?.toDouble(),
         ));
       });
     }
@@ -486,12 +560,14 @@ class _PlayerTile extends StatelessWidget {
     required this.label,
     required this.imageUrl,
     required this.heroTag,
+    this.score,
   });
 
   final String playerId;
-  final String label;     // shown under the tile
+  final String label; // shown under the tile
   final String? imageUrl; // null => not submitted
   final String heroTag;
+  final double? score;
 
   String _initials(String name) {
     final parts = name.trim().split(RegExp(r'\s+'));
@@ -512,7 +588,7 @@ class _PlayerTile extends StatelessWidget {
       label,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(
-        color: Colors.white.withOpacity(submitted ? 1.0 : 0.6),
+        color: Colors.white.withValues(alpha: submitted ? 1.0 : 0.6),
         fontWeight: FontWeight.w600,
         fontSize: 12,
       ),
@@ -549,6 +625,16 @@ class _PlayerTile extends StatelessWidget {
       );
     }
 
+    final scoreSubtitle = Text(
+      score == null ? 'Scoring…' : 'Score: ${score!.toStringAsFixed(0)}',
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(
+        color: Colors.white70,
+        fontWeight: FontWeight.w600,
+        fontSize: 11,
+      ),
+    );
+
     return SizedBox(
       width: 84,
       child: Column(
@@ -557,11 +643,15 @@ class _PlayerTile extends StatelessWidget {
           InkWell(
             borderRadius: BorderRadius.circular(12),
             onTap: () {
+              final caption = score == null
+                  ? '$label • Scoring…'
+                  : '$label • Score ${score!.toStringAsFixed(0)}';
               Navigator.of(context).push(
                 PageRouteBuilder(
                   pageBuilder: (_, __, ___) => _FullScreenPhoto(
                     heroTag: heroTag,
                     networkUrl: imageUrl!,
+                    caption: caption,
                   ),
                   transitionsBuilder: (_, animation, __, child) =>
                       FadeTransition(opacity: animation, child: child),
@@ -574,18 +664,31 @@ class _PlayerTile extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
                 child: AspectRatio(
                   aspectRatio: 1,
-                  child: Image.network(
-                    imageUrl!,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      color: const Color(0xFF3E2C8B),
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.broken_image, color: Colors.white70),
-                    ),
-                    loadingBuilder: (context, child, progress) {
-                      if (progress == null) return child;
-                      return const Center(child: CircularProgressIndicator());
-                    },
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: Image.network(
+                          imageUrl!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            color: const Color(0xFF3E2C8B),
+                            alignment: Alignment.center,
+                            child: const Icon(Icons.broken_image,
+                                color: Colors.white70),
+                          ),
+                          loadingBuilder: (context, child, progress) {
+                            if (progress == null) return child;
+                            return const Center(
+                                child: CircularProgressIndicator());
+                          },
+                        ),
+                      ),
+                      Positioned(
+                        right: 6,
+                        bottom: 6,
+                        child: _ScoreBadge(score: score),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -593,25 +696,72 @@ class _PlayerTile extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           nameLabel,
+          const SizedBox(height: 2),
+          scoreSubtitle,
         ],
       ),
     );
   }
 }
 
-/// Simple full-screen network image with pinch-to-zoom + Hero
+class _ScoreBadge extends StatelessWidget {
+  const _ScoreBadge({this.score});
+  final double? score;
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = score == null;
+    final text = pending ? '…' : score!.toStringAsFixed(0);
+
+    Color bg;
+    Color fg;
+    if (pending) {
+      bg = Colors.black54;
+      fg = Colors.white;
+    } else if (score! >= 80) {
+      bg = Colors.greenAccent.withValues(alpha: 0.9);
+      fg = Colors.black;
+    } else if (score! >= 50) {
+      bg = Colors.orangeAccent.withValues(alpha: 0.9);
+      fg = Colors.black;
+    } else {
+      bg = Colors.white24;
+      fg = Colors.white;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: fg,
+          fontWeight: FontWeight.w800,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+}
+
+/// Simple full-screen network image with pinch-to-zoom + Hero + caption
 class _FullScreenPhoto extends StatelessWidget {
   const _FullScreenPhoto({
     required this.heroTag,
     this.networkUrl,
     this.assetPath,
     this.filePath,
+    this.caption,
   }) : assert(networkUrl != null || assetPath != null || filePath != null);
 
   final String heroTag;
   final String? networkUrl;
   final String? assetPath;
   final String? filePath;
+  final String? caption;
 
   @override
   Widget build(BuildContext context) {
@@ -628,15 +778,42 @@ class _FullScreenPhoto extends StatelessWidget {
         foregroundColor: Colors.white,
         elevation: 0,
       ),
-      body: Center(
-        child: Hero(
-          tag: heroTag,
-          child: InteractiveViewer(
-            minScale: 0.5,
-            maxScale: 4.0,
-            child: image,
+      body: Stack(
+        children: [
+          Center(
+            child: Hero(
+              tag: heroTag,
+              child: InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: image,
+              ),
+            ),
           ),
-        ),
+          if (caption != null)
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 16,
+              child: SafeArea(
+                top: false,
+                child: Container(
+                  padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    caption!,
+                    textAlign: TextAlign.center,
+                    style:
+                    const TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
