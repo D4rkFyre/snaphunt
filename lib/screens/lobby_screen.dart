@@ -9,6 +9,7 @@ import 'package:snaphunt/models/game_model.dart'; // enum + parser
 import 'clue_submission_screen.dart';
 import 'host_live_submissions_screen.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
+import 'package:snaphunt/services/route_transitions.dart';
 
 
 /// ---------------------------------------------------------------------------
@@ -137,7 +138,7 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
             dedupPlayers.values.toList(growable: false);
 
             // -----------------------------------------------------------------
-            // Auto-navigation based on role and status
+            // Auto-navigation based on role and status (slide IN from RIGHT)
             // -----------------------------------------------------------------
             // Players (not host) → to Clues when started
             if (!widget.isHost && !_navigated && status == GameStatus.started) {
@@ -145,8 +146,8 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (!mounted) return;
                 Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(
-                    builder: (_) => ClueSubmissionScreen(
+                  slideFromRight(
+                    ClueSubmissionScreen(
                       gameId: widget.gameId,
                       playerId: widget.playerId,
                     ),
@@ -161,8 +162,8 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (!mounted) return;
                 Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(
-                    builder: (_) => HostLiveSubmissionsScreen(
+                  slideFromRight(
+                    HostLiveSubmissionsScreen(
                       gameId: widget.gameId,
                     ),
                   ),
@@ -341,8 +342,8 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
                         if (_navigated) return;
                         _navigated = true;
                         Navigator.of(context).pushReplacement(
-                          MaterialPageRoute(
-                            builder: (_) => HostLiveSubmissionsScreen(
+                          slideFromRight(
+                            HostLiveSubmissionsScreen(
                               gameId: widget.gameId,
                             ),
                           ),
@@ -375,7 +376,6 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
         current: GameNavTab.none,
         gameId: widget.gameId,
       ),
-
     );
   }
 }

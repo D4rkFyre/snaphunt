@@ -11,6 +11,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/services/device_id.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
+import 'package:snaphunt/services/camera_capture.dart';
+import 'package:snaphunt/services/route_transitions.dart';
 
 
 // One-time tutorial memory
@@ -38,8 +40,6 @@ class HostGameScreen extends StatefulWidget {
   final FirebaseFirestore? _db;
   final bool requireCluesToCreate;
 
-
-
   @override
   State<HostGameScreen> createState() => _HostGameScreenState();
 }
@@ -56,7 +56,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
   }
 
   final _nameCtrl = TextEditingController();
-  final ImagePicker _picker = ImagePicker();
+  // Removed ImagePicker instance; we always use CameraCapture.takePhoto()
   final List<_ClueDraft> _clues = [];
 
   // Tutorial targets
@@ -64,8 +64,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
   final _photoRowKey = GlobalKey();
   final _createKey = GlobalKey();
 
-  late final FirebaseFirestore _db =
-      widget._db ?? FirebaseFirestore.instance;
+  late final FirebaseFirestore _db = widget._db ?? FirebaseFirestore.instance;
 
   late final GameRepository _repo =
       widget._repo ?? GameRepository(firestore: _db);
@@ -244,7 +243,8 @@ class _HostGameScreenState extends State<HostGameScreen> {
 
         // debug
         // ignore: avoid_print
-        print('[host] uploading clue: lat=${clue.lat}, lng=${clue.lng}, path=${clue.xfile.path}');
+        print(
+            '[host] uploading clue: lat=${clue.lat}, lng=${clue.lng}, path=${clue.xfile.path}');
 
         await _repo.uploadClue(
           gameId: game.id,
@@ -264,21 +264,19 @@ class _HostGameScreenState extends State<HostGameScreen> {
           centerLng: area['centerLng']!,
           radiusMeters: area['radiusMeters']!,
         );
-
-
       } else {
         // debug
         // ignore: avoid_print
-        print('[host] no GPS on any clue -> game area not written (normal fallback)');
+        print(
+            '[host] no GPS on any clue -> game area not written (normal fallback)');
       }
 
       if (!mounted) return;
 
-      // 3) Navigate to lobby
- 
+      // 3) Navigate to lobby (slides IN FROM RIGHT)
       Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => CreateGameLobbyScreen(
+        slideFromRight(
+          CreateGameLobbyScreen(
             gameId: game.id,
             joinCode: game.joinCode,
             isHost: true,
@@ -298,7 +296,6 @@ class _HostGameScreenState extends State<HostGameScreen> {
   Widget build(BuildContext context) {
     final area = _computeBoundingCircle();
     final radiusDisplay = area?['radiusMeters']?.toStringAsFixed(0);
-
 
     return Scaffold(
       backgroundColor: const Color(0xFF3E2C8B),
@@ -384,12 +381,16 @@ class _HostGameScreenState extends State<HostGameScreen> {
                       onPressed: _busy
                           ? null
                           : () async {
-                        final file = await _picker.pickImage(
-                            source: ImageSource.camera);
-                        if (file != null) {
+                        // Force camera-only
+                        final x = await CameraCapture.takePhoto(
+                          imageQuality: 85,
+                          maxWidth: 2000,
+                          maxHeight: 2000,
+                        );
+                        if (x != null) {
                           final pos = await _tryGetPosition();
                           setState(() => _clues.add(_ClueDraft(
-                            xfile: file,
+                            xfile: x,
                             lat: pos?.latitude,
                             lng: pos?.longitude,
                           )));
@@ -412,37 +413,12 @@ class _HostGameScreenState extends State<HostGameScreen> {
                         ));
                       },
                     ),
-                    const SizedBox(width: 24),
-                    IconButton(
-                      icon: const Icon(Icons.photo_library,
-                          size: 28, color: Colors.white),
-                      onPressed: _busy
-                          ? null
-                          : () async {
-                        final files = await _picker.pickMultiImage();
-                        if (files.isNotEmpty) {
-                          // One reading for the whole batch (fast)
-                          final pos = await _tryGetPosition();
-                          setState(() {
-                            _clues.addAll(files.map((f) => _ClueDraft(
-                              xfile: f,
-                              lat: pos?.latitude,
-                              lng: pos?.longitude,
-                            )));
-                          });
-                        }
-                      },
-                    ),
+                    // Removed gallery button to eliminate the choice entirely.
                   ],
                 ),
               ),
 
-
-
-
               if (_clues.isNotEmpty) ...[
-
-
                 const SizedBox(height: 16),
                 Row(
                   children: [
@@ -493,7 +469,6 @@ class _HostGameScreenState extends State<HostGameScreen> {
                                   color: Colors.black87,
                                   borderRadius: BorderRadius.circular(8),
                                 ),
-
                               ),
                             ),
                           ),
@@ -527,10 +502,8 @@ class _HostGameScreenState extends State<HostGameScreen> {
                               ),
                             ),
                           ),
-
                           GestureDetector(
-                            onTap: () =>
-                                setState(() => _clues.removeAt(i)),
+                            onTap: () => setState(() => _clues.removeAt(i)),
                             child: const CircleAvatar(
                               radius: 12,
                               backgroundColor: Colors.black87,
@@ -545,7 +518,8 @@ class _HostGameScreenState extends State<HostGameScreen> {
                 const SizedBox(height: 12),
                 Center(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
                       color: Colors.black26,
                       borderRadius: BorderRadius.circular(12),
@@ -562,7 +536,6 @@ class _HostGameScreenState extends State<HostGameScreen> {
                     ),
                   ),
                 ),
-
               ],
 
               const SizedBox(height: 8),
@@ -594,8 +567,8 @@ class _HostGameScreenState extends State<HostGameScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.greenAccent,
                     foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 40, vertical: 20),
+                    padding:
+                    const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(30)),
                     textStyle: const TextStyle(
@@ -609,7 +582,6 @@ class _HostGameScreenState extends State<HostGameScreen> {
         ),
       ),
       bottomNavigationBar: const GameNavBar(current: GameNavTab.none),
-
     );
   }
 }
@@ -766,8 +738,8 @@ class _CoachCard extends StatelessWidget {
                 Row(
                   children: [
                     Text('$index / $total',
-                        style: const TextStyle(
-                            color: Colors.white70, fontSize: 12)),
+                        style:
+                        const TextStyle(color: Colors.white70, fontSize: 12)),
                     const Spacer(),
                     TextButton(
                       style: TextButton.styleFrom(

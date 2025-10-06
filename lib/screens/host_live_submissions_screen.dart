@@ -8,6 +8,8 @@ import 'package:snaphunt/models/clue_model.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/screens/score_screen.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
+import 'package:snaphunt/services/route_transitions.dart';
+
 
 class HostLiveSubmissionsScreen extends StatefulWidget {
   final String gameId;
@@ -43,7 +45,7 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => ScoreScreen(gameId: widget.gameId)),
+        fadeTo(ScoreScreen(gameId: widget.gameId)),
             (route) => false, // clear back stack
       );
     });
