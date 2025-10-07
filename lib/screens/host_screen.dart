@@ -4,16 +4,20 @@ import 'dart:math' as math;
 
 import 'lobby_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:camera/camera.dart'; // ADDED: for XFile (camera package)
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/models/game_model.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/services/device_id.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
-import 'package:snaphunt/services/camera_capture.dart';
+// REMOVED: image_picker + camera_capture (we use in-app camera now)
+// import 'package:image_picker/image_picker.dart';
+// import 'package:snaphunt/services/camera_capture.dart';
 import 'package:snaphunt/services/route_transitions.dart';
 
+// NEW: our simple in-app camera for host captures
+import 'package:snaphunt/screens/in_app_camera_no_clue_screen.dart';
 
 // One-time tutorial memory
 import 'package:shared_preferences/shared_preferences.dart';
@@ -56,7 +60,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
   }
 
   final _nameCtrl = TextEditingController();
-  // Removed ImagePicker instance; we always use CameraCapture.takePhoto()
+  // Removed ImagePicker instance; we always use in-app camera now
   final List<_ClueDraft> _clues = [];
 
   // Tutorial targets
@@ -292,6 +296,25 @@ class _HostGameScreenState extends State<HostGameScreen> {
     }
   }
 
+  Future<void> _captureClue() async {
+    // Open the in-app camera (no PiP needed for host)
+    final XFile? x = await Navigator.of(context).push<XFile>(
+      MaterialPageRoute(
+        builder: (_) => const InAppCameraNoClueScreen(),
+        fullscreenDialog: true,
+      ),
+    );
+    if (x != null) {
+      final pos = await _tryGetPosition();
+      if (!mounted) return;
+      setState(() => _clues.add(_ClueDraft(
+        xfile: x,
+        lat: pos?.latitude,
+        lng: pos?.longitude,
+      )));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final area = _computeBoundingCircle();
@@ -378,24 +401,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
                     IconButton(
                       icon: const Icon(Icons.camera_alt,
                           size: 28, color: Colors.white),
-                      onPressed: _busy
-                          ? null
-                          : () async {
-                        // Force camera-only
-                        final x = await CameraCapture.takePhoto(
-                          imageQuality: 85,
-                          maxWidth: 2000,
-                          maxHeight: 2000,
-                        );
-                        if (x != null) {
-                          final pos = await _tryGetPosition();
-                          setState(() => _clues.add(_ClueDraft(
-                            xfile: x,
-                            lat: pos?.latitude,
-                            lng: pos?.longitude,
-                          )));
-                        }
-                      },
+                      onPressed: _busy ? null : _captureClue,
                       onLongPress: () async {
                         // Optional: inline debug to inspect status fast
                         final service =
@@ -413,7 +419,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
                         ));
                       },
                     ),
-                    // Removed gallery button to eliminate the choice entirely.
+                    // (No gallery button: we want camera-only for host clues.)
                   ],
                 ),
               ),
@@ -560,15 +566,15 @@ class _HostGameScreenState extends State<HostGameScreen> {
               _CoachTarget(
                 key: _createKey,
                 child: ElevatedButton(
-                  onPressed:
-                  (_busy || (widget.requireCluesToCreate && _clues.isEmpty))
+                  onPressed: (_busy ||
+                      (widget.requireCluesToCreate && _clues.isEmpty))
                       ? null
                       : _createGame,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.greenAccent,
                     foregroundColor: Colors.black,
-                    padding:
-                    const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 40, vertical: 20),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(30)),
                     textStyle: const TextStyle(
@@ -586,6 +592,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
   }
 }
 
+// (The rest of your _CoachTarget, _CoachStep, _Coach, _CoachCard classes stay unchanged below)
 /// Wraps a target so it’s easy to measure its rect on screen
 class _CoachTarget extends StatelessWidget {
   final Widget child;
@@ -595,7 +602,6 @@ class _CoachTarget extends StatelessWidget {
   Widget build(BuildContext context) => child;
 }
 
-/// One coach step config
 class _CoachStep {
   final GlobalKey key;
   final String title;
@@ -603,7 +609,6 @@ class _CoachStep {
   _CoachStep({required this.key, required this.title, required this.text});
 }
 
-/// Very small overlay-based coach marks system
 class _Coach {
   final BuildContext root;
   OverlayEntry? _entry;
@@ -617,7 +622,6 @@ class _Coach {
   }
 
   Future<void> _showStep(_CoachStep step, int index, int total) async {
-    // find rect for the target
     final ctx = step.key.currentContext;
     if (ctx == null) return;
 
@@ -657,7 +661,6 @@ class _Coach {
                 ),
               ),
             ),
-            // tooltip card
             Positioned(
               left: offset.dx.clamp(16.0, media.size.width - 16.0),
               top: tooltipAbove

@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:camera/camera.dart';
 
 import 'package:snaphunt/widgets/progress_overlay.dart';
 
@@ -13,9 +14,9 @@ import 'package:snaphunt/models/clue_model.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/screens/score_screen.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
-import 'package:snaphunt/services/camera_capture.dart';
+// REMOVED (unused): import 'package:snaphunt/services/camera_capture.dart';
 import 'package:snaphunt/services/route_transitions.dart';
-
+import 'package:snaphunt/screens/in_app_camera_pip_screen.dart';
 
 class ClueSubmissionScreen extends StatefulWidget {
   const ClueSubmissionScreen({
@@ -34,7 +35,7 @@ class ClueSubmissionScreen extends StatefulWidget {
 }
 
 class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
-  // Removed ImagePicker; we now always use CameraCapture.takePhoto()
+  // Removed ImagePicker; we now always use in-app camera via InAppCameraPipScreen
   late final GameRepository _repo;
   bool _busy = false;
 
@@ -243,13 +244,18 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
     required String clueId,
     required String hostUrl,
   }) async {
-    // CAMERA-ONLY capture (no gallery choice)
-    final picked = await CameraCapture.takePhoto(
-      imageQuality: 85,
-      maxWidth: 2000,
-      maxHeight: 2000,
+    // === CAPTURE STEP (changed to in-app PiP camera) ===
+    final XFile? xfile = await Navigator.of(context).push<XFile>(
+      MaterialPageRoute(
+        builder: (_) => InAppCameraPipScreen(
+          hostClueImageUrl: hostUrl,
+          clueAbove: false, // set true to show clue bar above camera instead of corner PiP
+        ),
+        fullscreenDialog: true,
+      ),
     );
-    if (picked == null) return;
+
+    if (xfile == null) return; // user cancelled
 
     // --------- Game area check BEFORE upload ----------
     double? centerLat, centerLng, radiusMeters;
@@ -306,7 +312,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
         gameId: widget.gameId,
         clueId: clueId,
         playerId: widget.playerId,
-        imageFile: File(picked.path),
+        imageFile: File(xfile.path), // <— from XFile
       );
 
       if (!context.mounted) return;
@@ -543,7 +549,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
                                     : 'Submit Photo',
                               ),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: hasSubmitted ? accentDarker : accent,
+                                backgroundColor: hasSubmitted ? Color(0xFFE0B23C) : Color(0xFFFFC943),
                                 foregroundColor: Colors.black87,
                                 padding: const EdgeInsets.symmetric(vertical: 12),
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

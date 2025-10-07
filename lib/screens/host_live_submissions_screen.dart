@@ -168,7 +168,6 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                 stream: FirestoreRefs
                     .submissions(_repo.db, widget.gameId)
                     .orderBy('createdAt', descending: true)
-                    .orderBy('updatedAt', descending: true)
                     .snapshots(),
                 builder: (context, subsSnap) {
                   if (subsSnap.connectionState == ConnectionState.waiting) {
