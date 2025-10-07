@@ -18,7 +18,6 @@ dependencies:
   permission_handler: ^12.0.1
   camera: ^0.11.2
   path_provider: ^2.1.2
-  image_picker: ^1.1.1
 
   # Firebase
   firebase_core: ^2.31.0
