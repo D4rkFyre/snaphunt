@@ -18,7 +18,6 @@ dependencies:
   permission_handler: ^12.0.1
   camera: ^0.11.2
   path_provider: ^2.1.2
-  image_picker: ^1.1.1
 
   # Firebase
   firebase_core: ^2.31.0
@@ -54,4 +53,6 @@ flutter:
     - assets/icons/camera.svg
     - assets/icons/maps.svg
     - assets/icons/copy.svg
+    - assets/icons/map.svg
+    - assets/icons/info-circle.svg
     - assets/pictures/picture.png

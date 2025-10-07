@@ -5,6 +5,9 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:snaphunt/screens/map_screen.dart';
 import 'package:snaphunt/screens/game_info_screen.dart';
 
+import 'package:snaphunt/services/route_transitions.dart';
+
+
 enum GameNavTab { none, map, info }
 
 class GameNavBar extends StatelessWidget {
@@ -20,7 +23,16 @@ class GameNavBar extends StatelessWidget {
   });
 
   void _onSelect(BuildContext context, GameNavTab tab) {
-    if (tab == current) return;
+    final nav = Navigator.of(context);
+
+    // If the user taps the currently-selected tab (Map or Info) again,
+    // close that screen by popping if possible.
+    if (tab == current) {
+      if (nav.canPop()) {
+        nav.pop();
+      }
+      return;
+    }
 
     if (tab == GameNavTab.map) {
       if (gameId == null || gameId!.isEmpty) {
@@ -29,24 +41,20 @@ class GameNavBar extends StatelessWidget {
         );
         return;
       }
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => MapScreen(gameId: gameId!)),
-      );
+      nav.push(slideUp(MapScreen(gameId: gameId!)));
       return;
     }
 
     if (tab == GameNavTab.info) {
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const GameInfoScreen()),
-      );
+      nav.push(slideUp(const GameInfoScreen()));
       return;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    const bg = Color(0xFFFFC943); // your yellow
-    const fg = Color(0xFF3E2C8B); // your purple
+    const bg = Color(0xFFFFC943); // yellow
+    const fg = Color(0xFF3E2C8B); // purple
 
     final selected = current;
 
@@ -62,14 +70,14 @@ class GameNavBar extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
             _NavBtn(
-              asset: 'assets/icons/maps.svg',
+              asset: 'assets/icons/map.svg',
               semantic: 'Map',
               selected: selected == GameNavTab.map,
               onTap: () => _onSelect(context, GameNavTab.map),
               color: fg,
             ),
             _NavBtn(
-              asset: 'assets/icons/book.svg',
+              asset: 'assets/icons/info-circle.svg',
               semantic: 'Game Info',
               selected: selected == GameNavTab.info,
               onTap: () => _onSelect(context, GameNavTab.info),
@@ -119,3 +127,4 @@ class _NavBtn extends StatelessWidget {
     );
   }
 }
+

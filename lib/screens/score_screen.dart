@@ -7,7 +7,6 @@ import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/screens/home_screen.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
 
-
 class ScoreScreen extends StatefulWidget {
   final String gameId;
   final GameRepository? repository;
@@ -155,9 +154,9 @@ class _ScoreScreenState extends State<ScoreScreen> {
                       );
                     }
 
-                    // --------- Use ONLY the latest submission per (playerId, clueId) ---------
-                    // best[pid][clueId] = score of the LATEST submission
-                    final Map<String, Map<String, double>> best = {};
+                    // --------- Gather latest submission per (playerId, clueId) ---------
+                    final Map<String, Map<String, _LatestSub>> latest = {};
+                    final Map<String, Map<String, int>> whenMap = {}; // millis
 
                     int _extractWhenMillis(Map<String, dynamic> m) {
                       // Look for common timestamp fields in priority order
@@ -174,7 +173,6 @@ class _ScoreScreenState extends State<ScoreScreen> {
                         if (v is Timestamp) return v.millisecondsSinceEpoch;
                         if (v is num) return v.toInt();
                         if (v is String) {
-                          // try parse ISO8601
                           try {
                             return DateTime.parse(v).millisecondsSinceEpoch;
                           } catch (_) {/* ignore */}
@@ -182,8 +180,6 @@ class _ScoreScreenState extends State<ScoreScreen> {
                       }
                       return 0; // unknown -> treat as oldest
                     }
-
-                    final Map<String, Map<String, int>> whenMap = {}; // millis
 
                     for (final d in subsSnap.data?.docs ?? const []) {
                       final m = d.data();
@@ -194,27 +190,27 @@ class _ScoreScreenState extends State<ScoreScreen> {
                       final clueId = (m['clueId'] as String?)?.trim() ?? '';
                       if (clueId.isEmpty) continue;
 
-                      final score = (m['score'] as num?)?.toDouble();
-                      if (score == null) continue;
-
                       final when = _extractWhenMillis(m);
+                      final imageUrl = (m['imageUrl'] as String?)?.trim();
+                      final score = (m['score'] as num?)?.toDouble();
 
-                      final mp = best.putIfAbsent(pid, () => <String, double>{});
                       final wp = whenMap.putIfAbsent(pid, () => <String, int>{});
-
                       final prevWhen = wp[clueId] ?? -1;
                       if (when >= prevWhen) {
-                        // Replace if newer (or first seen)
                         wp[clueId] = when;
-                        mp[clueId] = score;
+                        final lp = latest.putIfAbsent(pid, () => <String, _LatestSub>{});
+                        lp[clueId] = _LatestSub(
+                          imageUrl: imageUrl,
+                          when: when,
+                          score: score,
+                        );
                       }
                     }
                     // -------------------------------------------------------------------------
 
-                    // Build final rows: average over *totalClues*,
-                    // counting missing submissions as 0s.
+                    // Build final rows
                     final List<_AvgRow> rows = [];
-                    final ids = {...roster.keys, ...best.keys};
+                    final ids = {...roster.keys, ...latest.keys};
 
                     for (final pid in ids) {
                       final label = roster[pid] ?? pid;
@@ -225,18 +221,34 @@ class _ScoreScreenState extends State<ScoreScreen> {
                           name: label,
                           avg: 0.0,
                           count: 0,
+                          imageUrls: const [],
                         ));
                         continue;
                       }
 
-                      final perClue = best[pid] ?? const <String, double>{};
-                      final sum = perClue.values.fold<double>(0.0, (a, b) => a + b);
-                      final avg = sum / totalClues; // missing clues count as 0
+                      final perClue = latest[pid] ?? const <String, _LatestSub>{};
+
+                      double sum = 0.0;
+                      int submittedCount = 0;
+                      final List<String> images = [];
+                      perClue.forEach((_, s) {
+                        if (s.score != null) {
+                          sum += s.score!;
+                          submittedCount++;
+                        }
+                        if ((s.imageUrl ?? '').isNotEmpty) {
+                          images.add(s.imageUrl!);
+                        }
+                      });
+
+                      final avg = sum / totalClues;
+
                       rows.add(_AvgRow(
                         playerId: pid,
                         name: label,
                         avg: avg,
-                        count: perClue.length, // number of clues actually submitted
+                        count: submittedCount,
+                        imageUrls: images,
                       ));
                     }
 
@@ -248,97 +260,280 @@ class _ScoreScreenState extends State<ScoreScreen> {
                     });
 
                     if (rows.isEmpty) {
-                      return const Center(
-                        child: Text(
-                          'No scores yet.',
-                          style: TextStyle(color: Colors.white70),
-                        ),
+                      return Column(
+                        children: [
+                          const Expanded(
+                            child: Center(
+                              child: Text(
+                                'No scores yet.',
+                                style: TextStyle(color: Colors.white70),
+                              ),
+                            ),
+                          ),
+                          // Bottom New Game button
+                          SafeArea(
+                            top: false,
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                              child: SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  onPressed: _goHome,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.greenAccent,
+                                    foregroundColor: Colors.black,
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 16, horizontal: 32),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(30),
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    'New Game',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       );
                     }
 
                     final top = rows.take(3).toList();
 
+                    // ---- Main content + bottom button ----
                     return Column(
                       children: [
-                        // Winners block
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: cardBg,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              children: [
-                                Text(
-                                  totalClues > 0
-                                      ? 'Winners'
-                                      : 'Winners',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 18,
+                        // Expandable main content (winners + leaderboard)
+                        Expanded(
+                          child: Column(
+                            children: [
+                              // Winners block
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: cardBg,
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  padding: const EdgeInsets.all(16),
+                                  child: Column(
+                                    children: [
+                                      const Text(
+                                        'Winners',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 18,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Row(
+                                        mainAxisAlignment:
+                                        MainAxisAlignment.spaceEvenly,
+                                        children: [
+                                          if (top.length >= 2)
+                                            _PodiumTile(rank: 2, row: top[1]),
+                                          _PodiumTile(
+                                              rank: 1,
+                                              row: top[0],
+                                              highlight: true),
+                                          if (top.length >= 3)
+                                            _PodiumTile(rank: 3, row: top[2]),
+                                        ],
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                const SizedBox(height: 12),
-                                Row(
-                                  mainAxisAlignment:
-                                  MainAxisAlignment.spaceEvenly,
-                                  children: [
-                                    if (top.length >= 2)
-                                      _PodiumTile(rank: 2, row: top[1]),
-                                    _PodiumTile(rank: 1, row: top[0], highlight: true),
-                                    if (top.length >= 3)
-                                      _PodiumTile(rank: 3, row: top[2]),
-                                  ],
+                              ),
+
+                              // Full leaderboard WITH a single-row horizontal scroller
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: cardBg,
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    child: ListView.separated(
+                                      padding:
+                                      const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                                      itemCount: rows.length,
+                                      separatorBuilder: (_, __) => const Divider(
+                                          color: Colors.white24, height: 1),
+                                      itemBuilder: (context, i) {
+                                        final r = rows[i];
+                                        return Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                              vertical: 6),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                            children: [
+                                              ListTile(
+                                                leading:
+                                                _CircleInitials(name: r.name),
+                                                title: Text(
+                                                  r.name,
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                                subtitle: Text(
+                                                  totalClues > 0
+                                                      ? 'Avg across $totalClues clue(s) • ${r.count} submission(s)'
+                                                      : 'No clues',
+                                                  style: const TextStyle(
+                                                      color: Colors.white70),
+                                                ),
+                                                trailing: Text(
+                                                  r.avg.toStringAsFixed(0),
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 18,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ),
+
+                                              // >>> SINGLE-LINE HORIZONTAL SCROLLER <<<
+                                              if (r.imageUrls.isNotEmpty)
+                                                SizedBox(
+                                                  height: 78,
+                                                  child: ScrollConfiguration(
+                                                    behavior: const _NoGlowBehavior(),
+                                                    child: SingleChildScrollView(
+                                                      scrollDirection:
+                                                      Axis.horizontal,
+                                                      physics:
+                                                      const BouncingScrollPhysics(),
+                                                      padding:
+                                                      const EdgeInsets.symmetric(
+                                                          horizontal: 12),
+                                                      child: Row(
+                                                        children: [
+                                                          for (int idx = 0;
+                                                          idx < r.imageUrls.length;
+                                                          idx++) ...[
+                                                            GestureDetector(
+                                                              onTap: () {
+                                                                Navigator.of(context).push(
+                                                                  MaterialPageRoute(
+                                                                    builder: (_) =>
+                                                                        _ImageViewerPage(
+                                                                          imageUrls:
+                                                                          r.imageUrls,
+                                                                          initialIndex: idx,
+                                                                          title: r.name,
+                                                                        ),
+                                                                  ),
+                                                                );
+                                                              },
+                                                              child: ClipRRect(
+                                                                borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                    10),
+                                                                child: AspectRatio(
+                                                                  aspectRatio: 1,
+                                                                  child:
+                                                                  Image.network(
+                                                                    r.imageUrls[idx],
+                                                                    fit: BoxFit.cover,
+                                                                    loadingBuilder:
+                                                                        (c, w, p) {
+                                                                      if (p == null) {
+                                                                        return w;
+                                                                      }
+                                                                      return Container(
+                                                                        color: Colors
+                                                                            .black12,
+                                                                        alignment:
+                                                                        Alignment
+                                                                            .center,
+                                                                        child:
+                                                                        const SizedBox(
+                                                                          width: 18,
+                                                                          height: 18,
+                                                                          child:
+                                                                          CircularProgressIndicator(
+                                                                            strokeWidth:
+                                                                            2,
+                                                                          ),
+                                                                        ),
+                                                                      );
+                                                                    },
+                                                                    errorBuilder:
+                                                                        (c, e, st) {
+                                                                      return Container(
+                                                                        color: Colors
+                                                                            .black26,
+                                                                        alignment:
+                                                                        Alignment
+                                                                            .center,
+                                                                        child:
+                                                                        const Icon(
+                                                                          Icons
+                                                                              .broken_image,
+                                                                          color: Colors
+                                                                              .white70,
+                                                                        ),
+                                                                      );
+                                                                    },
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            ),
+                                                            const SizedBox(width: 8),
+                                                          ],
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
                         ),
 
-                        // Full leaderboard
-                        Expanded(
+                        // Bottom New Game button (matches other green buttons)
+                        SafeArea(
+                          top: false,
                           child: Padding(
                             padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: cardBg,
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: ListView.separated(
-                                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                                itemCount: rows.length,
-                                separatorBuilder: (_, __) =>
-                                const Divider(color: Colors.white24, height: 1),
-                                itemBuilder: (context, i) {
-                                  final r = rows[i];
-                                  return ListTile(
-                                    leading: _CircleInitials(name: r.name),
-                                    title: Text(
-                                      r.name,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                    subtitle: Text(
-                                      totalClues > 0
-                                          ? 'Avg across $totalClues clue(s) • ${r.count} submission(s)'
-                                          : 'No clues',
-                                      style: const TextStyle(color: Colors.white70),
-                                    ),
-                                    trailing: Text(
-                                      r.avg.toStringAsFixed(0),
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  );
-                                },
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: _goHome,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.greenAccent,
+                                  foregroundColor: Colors.black,
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 16, horizontal: 32),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(30),
+                                  ),
+                                ),
+                                child: const Text(
+                                  'New Game',
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
@@ -355,10 +550,31 @@ class _ScoreScreenState extends State<ScoreScreen> {
           current: GameNavTab.none,
           gameId: widget.gameId,
         ),
-
       ),
     );
   }
+}
+
+class _NoGlowBehavior extends ScrollBehavior {
+  const _NoGlowBehavior();
+  @override
+  Widget buildViewportChrome(
+      BuildContext context, Widget child, AxisDirection axisDirection) {
+    return child;
+  }
+
+  // For newer Flutter versions (no glow):
+  @override
+  Widget buildOverscrollIndicator(
+      BuildContext context, Widget child, ScrollableDetails details) =>
+      child;
+}
+
+class _LatestSub {
+  final String? imageUrl;
+  final int when;
+  final double? score;
+  _LatestSub({this.imageUrl, required this.when, this.score});
 }
 
 class _AvgRow {
@@ -366,11 +582,13 @@ class _AvgRow {
   final String name;
   final double avg;
   final int count;
+  final List<String> imageUrls;
   _AvgRow({
     required this.playerId,
     required this.name,
     required this.avg,
     required this.count,
+    required this.imageUrls,
   });
 }
 
@@ -457,6 +675,73 @@ class _CircleInitials extends StatelessWidget {
           color: Colors.black87,
           fontWeight: FontWeight.w800,
         ),
+      ),
+    );
+  }
+}
+
+/// Full-screen image viewer with swipe / zoom.
+class _ImageViewerPage extends StatefulWidget {
+  final List<String> imageUrls;
+  final int initialIndex;
+  final String title;
+
+  const _ImageViewerPage({
+    required this.imageUrls,
+    required this.initialIndex,
+    required this.title,
+  });
+
+  @override
+  State<_ImageViewerPage> createState() => _ImageViewerPageState();
+}
+
+class _ImageViewerPageState extends State<_ImageViewerPage> {
+  late final PageController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: Text(widget.title, style: const TextStyle(color: Colors.white)),
+      ),
+      body: PageView.builder(
+        controller: _controller,
+        itemCount: widget.imageUrls.length,
+        itemBuilder: (context, index) {
+          final url = widget.imageUrls[index];
+          return InteractiveViewer(
+            panEnabled: true,
+            minScale: 0.8,
+            maxScale: 4.0,
+            child: Center(
+              child: Image.network(
+                url,
+                fit: BoxFit.contain,
+                loadingBuilder: (c, w, p) {
+                  if (p == null) return w;
+                  return const Center(
+                    child: CircularProgressIndicator(),
+                  );
+                },
+                errorBuilder: (c, e, st) => const Icon(
+                  Icons.broken_image,
+                  color: Colors.white70,
+                  size: 48,
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }

@@ -6,6 +6,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:snaphunt/services/device_id.dart';
 import 'package:snaphunt/services/rejoin_service.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
+import 'package:snaphunt/services/route_transitions.dart';
 
 
 /// ---------------------------------------------------------------------------
@@ -85,15 +86,10 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 12),
 
-            // Big tappable icon -> HostGameScreen
+            // Big tappable icon -> HostGameScreen (slides DOWN from top)
             GestureDetector(
               onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const HostGameScreen(),
-                  ),
-                );
+                Navigator.of(context).push(slideDownFromTop(const HostGameScreen()));
               },
               child: SvgPicture.asset(
                 'assets/icons/maps.svg',
@@ -101,7 +97,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 height: 160,
               ),
             ),
-
 
             const SizedBox(height: 40),
 
@@ -118,15 +113,10 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 12),
 
-            // Big tappable icon -> JoinGameScreen
+            // Big tappable icon -> JoinGameScreen (slides UP from bottom)
             GestureDetector(
               onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const JoinGameScreen(),
-                  ),
-                );
+                Navigator.of(context).push(slideUpFromBottom(const JoinGameScreen()));
               },
               child: SvgPicture.asset(
                 'assets/icons/camera.svg',
@@ -156,7 +146,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
 
       bottomNavigationBar: const GameNavBar(current: GameNavTab.none),
-
     );
   }
 }
