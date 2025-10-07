@@ -54,4 +54,6 @@ flutter:
     - assets/icons/camera.svg
     - assets/icons/maps.svg
     - assets/icons/copy.svg
+    - assets/icons/map.svg
+    - assets/icons/info-circle.svg
     - assets/pictures/picture.png

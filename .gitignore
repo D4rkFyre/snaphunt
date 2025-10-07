@@ -38,6 +38,7 @@ android/.cxx/
 android/local.properties
 android/key.properties
 android/app/build/
+android/gradle.properties
 *.jks
 *.keystore
 

@@ -62,14 +62,14 @@ class GameNavBar extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
             _NavBtn(
-              asset: 'assets/icons/maps.svg',
+              asset: 'assets/icons/map.svg',
               semantic: 'Map',
               selected: selected == GameNavTab.map,
               onTap: () => _onSelect(context, GameNavTab.map),
               color: fg,
             ),
             _NavBtn(
-              asset: 'assets/icons/book.svg',
+              asset: 'assets/icons/info-circle.svg',
               semantic: 'Game Info',
               selected: selected == GameNavTab.info,
               onTap: () => _onSelect(context, GameNavTab.info),

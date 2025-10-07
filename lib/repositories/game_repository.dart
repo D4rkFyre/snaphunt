@@ -29,13 +29,19 @@ class GameRepository {
   FirebaseStorage get storage => _storage ?? FirebaseStorage.instance;
 
   /// Player flow: join by code with (deviceId, nickname).
-  /// Enforces: game exists, status == waiting, and host device cannot join as player.
+  /// Enforces: game exists, status == waiting, host device cannot join as player,
+  /// and **nickname must be unique within the lobby** (race-condition safe).
   Future<(String gameId, String joinCode)> joinGameByCode({
     required String code,
     required String deviceId,
     required String nickname,
   }) async {
     final c = code.toUpperCase();
+    final cleanNickname = nickname.trim();
+    if (cleanNickname.isEmpty) {
+      throw StateError('Please enter a nickname.');
+    }
+    final nicknameLower = cleanNickname.toLowerCase();
 
     return await db.runTransaction<(String, String)>((tx) async {
       // 1) code -> gameId
@@ -68,6 +74,47 @@ class GameRepository {
             'You are the host on this device and cannot join as a player.');
       }
 
+      // === Nickname uniqueness checks (defensive + atomic) ==================
+
+      // A) Defensive check against existing 'players' field (it may contain
+      //    strings or maps depending on legacy/joins). We reject if a name
+      //    with same lowercase already exists.
+      final existingPlayersRaw = data['players'];
+      if (existingPlayersRaw is List) {
+        for (final p in existingPlayersRaw) {
+          if (p is String) {
+            if (p.toLowerCase() == nicknameLower) {
+              throw StateError(
+                  'That nickname is already taken in this lobby. Pick another.');
+            }
+          } else if (p is Map<String, dynamic>) {
+            final n = (p['nickname'] as String?)?.trim();
+            if (n != null && n.toLowerCase() == nicknameLower) {
+              throw StateError(
+                  'That nickname is already taken in this lobby. Pick another.');
+            }
+          }
+        }
+      }
+
+      // B) Atomic lock to prevent races:
+      //    games/{gameId}/nicknames/{nicknameLower}
+      final nicknameLockRef =
+      gameRef.collection('nicknames').doc(nicknameLower);
+      final nicknameLockSnap = await tx.get(nicknameLockRef);
+      if (nicknameLockSnap.exists) {
+        throw StateError(
+            'That nickname is already taken in this lobby. Pick another.');
+      }
+
+      // Reserve nickname (within the same transaction)
+      tx.set(nicknameLockRef, {
+        'nickname': cleanNickname,
+        'nicknameLower': nicknameLower,
+        'lockedBy': deviceId,
+        'lockedAt': FieldValue.serverTimestamp(),
+      });
+
       // 3) updates: add deviceId and ensure players[] has a display entry
       final updates = <String, dynamic>{};
 
@@ -75,8 +122,13 @@ class GameRepository {
         updates['playerDeviceIds'] = FieldValue.arrayUnion([deviceId]);
       }
 
+      // Keep legacy support: players may contain strings; we add a map entry.
       updates['players'] = FieldValue.arrayUnion([
-        {'deviceId': deviceId, 'nickname': nickname},
+        {
+          'deviceId': deviceId,
+          'nickname': cleanNickname,
+          'nicknameLower': nicknameLower,
+        },
       ]);
 
       updates['roles.$deviceId'] = 'player';
@@ -230,8 +282,7 @@ class GameRepository {
     // debug
     // ignore: avoid_print
     print(
-        "[uploadClue] gameId=$gameId clueId=$clueId lat=$lat lng=$lng willWriteLocation=${data.containsKey('location')}"
-    );
+        "[uploadClue] gameId=$gameId clueId=$clueId lat=$lat lng=$lng willWriteLocation=${data.containsKey('location')}");
 
     await FirestoreRefs.clues(db, gameId)
         .doc(clueId)
