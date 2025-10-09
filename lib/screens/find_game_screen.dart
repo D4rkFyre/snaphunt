@@ -7,6 +7,7 @@ import 'package:snaphunt/services/join_code.dart';
 import 'package:snaphunt/services/device_id.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
+import 'package:snaphunt/services/route_transitions.dart';
 
 
 /// ---------------------------------------------------------------------------
@@ -46,7 +47,6 @@ class JoinGameScreen extends StatefulWidget {
 }
 
 class _JoinGameScreenState extends State<JoinGameScreen> {
-
   // Text fields: code + nickname
   final TextEditingController _gameCodeController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
@@ -123,8 +123,8 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
 
       // Success → go to the live Lobby view as a player (no Start button)
       Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => CreateGameLobbyScreen(
+        slideFromRight(
+          CreateGameLobbyScreen(
             gameId: gameId,
             joinCode: resolvedCode,
             isHost: false,      // player view → no Start Game button
@@ -271,7 +271,6 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
       ),
 
       bottomNavigationBar: const GameNavBar(current: GameNavTab.none),
-
     );
   }
 }

@@ -4,14 +4,20 @@ import 'dart:math' as math;
 
 import 'lobby_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:camera/camera.dart'; // ADDED: for XFile (camera package)
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/models/game_model.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/services/device_id.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
+// REMOVED: image_picker + camera_capture (we use in-app camera now)
+// import 'package:image_picker/image_picker.dart';
+// import 'package:snaphunt/services/camera_capture.dart';
+import 'package:snaphunt/services/route_transitions.dart';
 
+// NEW: our simple in-app camera for host captures
+import 'package:snaphunt/screens/in_app_camera_no_clue_screen.dart';
 
 // One-time tutorial memory
 import 'package:shared_preferences/shared_preferences.dart';
@@ -38,8 +44,6 @@ class HostGameScreen extends StatefulWidget {
   final FirebaseFirestore? _db;
   final bool requireCluesToCreate;
 
-
-
   @override
   State<HostGameScreen> createState() => _HostGameScreenState();
 }
@@ -56,7 +60,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
   }
 
   final _nameCtrl = TextEditingController();
-  final ImagePicker _picker = ImagePicker();
+  // Removed ImagePicker instance; we always use in-app camera now
   final List<_ClueDraft> _clues = [];
 
   // Tutorial targets
@@ -64,8 +68,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
   final _photoRowKey = GlobalKey();
   final _createKey = GlobalKey();
 
-  late final FirebaseFirestore _db =
-      widget._db ?? FirebaseFirestore.instance;
+  late final FirebaseFirestore _db = widget._db ?? FirebaseFirestore.instance;
 
   late final GameRepository _repo =
       widget._repo ?? GameRepository(firestore: _db);
@@ -244,7 +247,8 @@ class _HostGameScreenState extends State<HostGameScreen> {
 
         // debug
         // ignore: avoid_print
-        print('[host] uploading clue: lat=${clue.lat}, lng=${clue.lng}, path=${clue.xfile.path}');
+        print(
+            '[host] uploading clue: lat=${clue.lat}, lng=${clue.lng}, path=${clue.xfile.path}');
 
         await _repo.uploadClue(
           gameId: game.id,
@@ -264,21 +268,19 @@ class _HostGameScreenState extends State<HostGameScreen> {
           centerLng: area['centerLng']!,
           radiusMeters: area['radiusMeters']!,
         );
-
-
       } else {
         // debug
         // ignore: avoid_print
-        print('[host] no GPS on any clue -> game area not written (normal fallback)');
+        print(
+            '[host] no GPS on any clue -> game area not written (normal fallback)');
       }
 
       if (!mounted) return;
 
-      // 3) Navigate to lobby
- 
+      // 3) Navigate to lobby (slides IN FROM RIGHT)
       Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => CreateGameLobbyScreen(
+        slideFromRight(
+          CreateGameLobbyScreen(
             gameId: game.id,
             joinCode: game.joinCode,
             isHost: true,
@@ -294,11 +296,29 @@ class _HostGameScreenState extends State<HostGameScreen> {
     }
   }
 
+  Future<void> _captureClue() async {
+    // Open the in-app camera (no PiP needed for host)
+    final XFile? x = await Navigator.of(context).push<XFile>(
+      MaterialPageRoute(
+        builder: (_) => const InAppCameraNoClueScreen(),
+        fullscreenDialog: true,
+      ),
+    );
+    if (x != null) {
+      final pos = await _tryGetPosition();
+      if (!mounted) return;
+      setState(() => _clues.add(_ClueDraft(
+        xfile: x,
+        lat: pos?.latitude,
+        lng: pos?.longitude,
+      )));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final area = _computeBoundingCircle();
     final radiusDisplay = area?['radiusMeters']?.toStringAsFixed(0);
-
 
     return Scaffold(
       backgroundColor: const Color(0xFF3E2C8B),
@@ -381,20 +401,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
                     IconButton(
                       icon: const Icon(Icons.camera_alt,
                           size: 28, color: Colors.white),
-                      onPressed: _busy
-                          ? null
-                          : () async {
-                        final file = await _picker.pickImage(
-                            source: ImageSource.camera);
-                        if (file != null) {
-                          final pos = await _tryGetPosition();
-                          setState(() => _clues.add(_ClueDraft(
-                            xfile: file,
-                            lat: pos?.latitude,
-                            lng: pos?.longitude,
-                          )));
-                        }
-                      },
+                      onPressed: _busy ? null : _captureClue,
                       onLongPress: () async {
                         // Optional: inline debug to inspect status fast
                         final service =
@@ -412,37 +419,12 @@ class _HostGameScreenState extends State<HostGameScreen> {
                         ));
                       },
                     ),
-                    const SizedBox(width: 24),
-                    IconButton(
-                      icon: const Icon(Icons.photo_library,
-                          size: 28, color: Colors.white),
-                      onPressed: _busy
-                          ? null
-                          : () async {
-                        final files = await _picker.pickMultiImage();
-                        if (files.isNotEmpty) {
-                          // One reading for the whole batch (fast)
-                          final pos = await _tryGetPosition();
-                          setState(() {
-                            _clues.addAll(files.map((f) => _ClueDraft(
-                              xfile: f,
-                              lat: pos?.latitude,
-                              lng: pos?.longitude,
-                            )));
-                          });
-                        }
-                      },
-                    ),
+                    // (No gallery button: we want camera-only for host clues.)
                   ],
                 ),
               ),
 
-
-
-
               if (_clues.isNotEmpty) ...[
-
-
                 const SizedBox(height: 16),
                 Row(
                   children: [
@@ -493,7 +475,6 @@ class _HostGameScreenState extends State<HostGameScreen> {
                                   color: Colors.black87,
                                   borderRadius: BorderRadius.circular(8),
                                 ),
-
                               ),
                             ),
                           ),
@@ -527,10 +508,8 @@ class _HostGameScreenState extends State<HostGameScreen> {
                               ),
                             ),
                           ),
-
                           GestureDetector(
-                            onTap: () =>
-                                setState(() => _clues.removeAt(i)),
+                            onTap: () => setState(() => _clues.removeAt(i)),
                             child: const CircleAvatar(
                               radius: 12,
                               backgroundColor: Colors.black87,
@@ -545,7 +524,8 @@ class _HostGameScreenState extends State<HostGameScreen> {
                 const SizedBox(height: 12),
                 Center(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
                       color: Colors.black26,
                       borderRadius: BorderRadius.circular(12),
@@ -562,7 +542,6 @@ class _HostGameScreenState extends State<HostGameScreen> {
                     ),
                   ),
                 ),
-
               ],
 
               const SizedBox(height: 8),
@@ -587,8 +566,8 @@ class _HostGameScreenState extends State<HostGameScreen> {
               _CoachTarget(
                 key: _createKey,
                 child: ElevatedButton(
-                  onPressed:
-                  (_busy || (widget.requireCluesToCreate && _clues.isEmpty))
+                  onPressed: (_busy ||
+                      (widget.requireCluesToCreate && _clues.isEmpty))
                       ? null
                       : _createGame,
                   style: ElevatedButton.styleFrom(
@@ -609,11 +588,11 @@ class _HostGameScreenState extends State<HostGameScreen> {
         ),
       ),
       bottomNavigationBar: const GameNavBar(current: GameNavTab.none),
-
     );
   }
 }
 
+// (The rest of your _CoachTarget, _CoachStep, _Coach, _CoachCard classes stay unchanged below)
 /// Wraps a target so it’s easy to measure its rect on screen
 class _CoachTarget extends StatelessWidget {
   final Widget child;
@@ -623,7 +602,6 @@ class _CoachTarget extends StatelessWidget {
   Widget build(BuildContext context) => child;
 }
 
-/// One coach step config
 class _CoachStep {
   final GlobalKey key;
   final String title;
@@ -631,7 +609,6 @@ class _CoachStep {
   _CoachStep({required this.key, required this.title, required this.text});
 }
 
-/// Very small overlay-based coach marks system
 class _Coach {
   final BuildContext root;
   OverlayEntry? _entry;
@@ -645,7 +622,6 @@ class _Coach {
   }
 
   Future<void> _showStep(_CoachStep step, int index, int total) async {
-    // find rect for the target
     final ctx = step.key.currentContext;
     if (ctx == null) return;
 
@@ -685,7 +661,6 @@ class _Coach {
                 ),
               ),
             ),
-            // tooltip card
             Positioned(
               left: offset.dx.clamp(16.0, media.size.width - 16.0),
               top: tooltipAbove
@@ -766,8 +741,8 @@ class _CoachCard extends StatelessWidget {
                 Row(
                   children: [
                     Text('$index / $total',
-                        style: const TextStyle(
-                            color: Colors.white70, fontSize: 12)),
+                        style:
+                        const TextStyle(color: Colors.white70, fontSize: 12)),
                     const Spacer(),
                     TextButton(
                       style: TextButton.styleFrom(
