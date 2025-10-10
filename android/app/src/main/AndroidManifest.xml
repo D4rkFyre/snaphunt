@@ -11,9 +11,9 @@
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <application
-        android:label="snaphunt"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/adaptive"
+        android:label="@string/app_name">
 
         <meta-data
             android:name="com.google.android.geo.API_KEY"
