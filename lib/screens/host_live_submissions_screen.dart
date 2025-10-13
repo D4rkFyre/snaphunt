@@ -10,27 +10,39 @@ import 'package:snaphunt/screens/score_screen.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
 import 'package:snaphunt/services/route_transitions.dart';
 
-
 class HostLiveSubmissionsScreen extends StatefulWidget {
   final String gameId;
+  final String? hostNickname;
+  final String? hostDeviceId;
   final GameRepository? repository;
 
   const HostLiveSubmissionsScreen({
     super.key,
     required this.gameId,
+    this.hostNickname,
+    this.hostDeviceId,
     this.repository,
   });
 
   @override
-  State<HostLiveSubmissionsScreen> createState() =>
-      _HostLiveSubmissionsScreenState();
+  State<HostLiveSubmissionsScreen> createState() => _HostLiveSubmissionsScreenState();
 }
 
 class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
   late final GameRepository _repo;
-
-  // Prevent duplicate navigations
   bool _navigatedToScores = false;
+
+  bool _isHostNickname(String nick) {
+    final hn = (widget.hostNickname ?? '').trim();
+    if (hn.isEmpty || nick.isEmpty) return false;
+    return hn.toLowerCase() == nick.toLowerCase();
+  }
+
+  bool _isHostId(String deviceId) {
+    final hd = (widget.hostDeviceId ?? '').trim();
+    if (hd.isEmpty || deviceId.isEmpty) return false;
+    return hd == deviceId;
+  }
 
   @override
   void initState() {
@@ -41,12 +53,11 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
   void _goToScoresOnce() {
     if (!mounted || _navigatedToScores) return;
     _navigatedToScores = true;
-    // Post-frame so we don't navigate during build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
         fadeTo(ScoreScreen(gameId: widget.gameId)),
-            (route) => false, // clear back stack
+            (route) => false,
       );
     });
   }
@@ -62,18 +73,13 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
         backgroundColor: darkBg,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          'Player Submissions',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-        ),
+        title: const Text('Host — Live Submissions'),
       ),
+      // FIX: your enum is GameNavTab, not GameNav. Also pass gameId (optional but useful for Map tab).
+      bottomNavigationBar: GameNavBar(current: GameNavTab.none, gameId: widget.gameId),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: FirestoreRefs.gameDoc(_repo.db, widget.gameId).snapshots(),
         builder: (context, gameSnap) {
-          // ----------------- Build roster & detect host (schema-based) -----------------
-          final List<_RosterEntry> roster = [];
-
-          // Read game doc data safely
           String hostDeviceIdField = '';
           Map<String, dynamic> roles = const {};
           final rawPlayers = <dynamic>[];
@@ -88,54 +94,58 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
             if (rp is List) rawPlayers.addAll(rp);
           }
 
-          // If the game is finished (whether by this host or not), leave this screen.
           if (statusRaw == 'finished') {
             _goToScoresOnce();
           }
 
-          // Find any host-backed entry to learn the host's nickname (for legacy string dup removal)
+          // Build roster of non-host players (deviceId preferred, fallback nickname)
+          final roster = <_RosterEntry>[];
+          final seen = <String>{}; // de-dupe by deviceId if present
           final hostNicknames = <String>{};
+
+          // collect host nicknames to filter legacy string entries
           for (final e in rawPlayers) {
             if (e is Map) {
               final m = Map<String, dynamic>.from(e);
               final did = (m['deviceId'] as String?)?.trim() ?? '';
               final nick = (m['nickname'] as String?)?.trim() ?? '';
               final isHost = (hostDeviceIdField.isNotEmpty && did == hostDeviceIdField) ||
-                  (did.isNotEmpty && roles[did] == 'host');
+                  (did.isNotEmpty && roles[did] == 'host') ||
+                  (_isHostId(did)) ||
+                  _isHostNickname(nick);
               if (isHost && nick.isNotEmpty) hostNicknames.add(nick);
             }
           }
 
-          // Build roster = every participant who is NOT the host
-          final dedup = <String, _RosterEntry>{};
           for (final e in rawPlayers) {
-            if (e is String) {
-              final name = e.trim();
-              if (name.isEmpty) continue;
-              if (hostNicknames.contains(name)) continue; // drop legacy host copy
-              dedup['n:$name'] = _RosterEntry(id: name, label: name);
-            } else if (e is Map) {
+            if (e is Map) {
               final m = Map<String, dynamic>.from(e);
               final did = (m['deviceId'] as String?)?.trim() ?? '';
               final nick = (m['nickname'] as String?)?.trim() ?? '';
 
               final isHost = (hostDeviceIdField.isNotEmpty && did == hostDeviceIdField) ||
-                  (did.isNotEmpty && roles[did] == 'host');
+                  (did.isNotEmpty && roles[did] == 'host') ||
+                  (_isHostId(did)) ||
+                  _isHostNickname(nick);
               if (isHost) continue;
 
-              final id = did.isNotEmpty ? did : (nick.isNotEmpty ? nick : '');
-              if (id.isEmpty) continue;
+              String id;
+              if (did.isNotEmpty) {
+                if (seen.contains(did)) continue;
+                seen.add(did);
+                id = did;
+              } else {
+                // legacy: no deviceId stored, use nickname if not a host nick
+                if (nick.isEmpty || hostNicknames.contains(nick)) continue;
+                id = nick;
+              }
               final label = nick.isNotEmpty ? nick : id;
-              final key = did.isNotEmpty ? 'd:$did' : 'n:$label';
-              dedup[key] = _RosterEntry(id: id, label: label);
+              roster.add(_RosterEntry(id: id, label: label));
+            } else if (e is String) {
+              final nick = e.trim();
+              if (nick.isEmpty || hostNicknames.contains(nick)) continue;
+              roster.add(_RosterEntry(id: nick, label: nick));
             }
-          }
-          roster.addAll(dedup.values);
-
-          // Simple host check for submissions (playerId == deviceId)
-          bool _isHostId(String id) {
-            if (id.isEmpty) return false;
-            return hostDeviceIdField.isNotEmpty && id == hostDeviceIdField;
           }
 
           return StreamBuilder<List<Clue>>(
@@ -164,7 +174,6 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
               }
 
               return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                // Use updatedAt so UI reacts immediately to retakes/scores
                 stream: FirestoreRefs
                     .submissions(_repo.db, widget.gameId)
                     .orderBy('createdAt', descending: true)
@@ -182,27 +191,16 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                     );
                   }
 
-                  // ---- Pick the LATEST submission per (clueId, playerId)
-                  // Use submission time (createdAt/submittedAt/timestamp/ts), not updatedAt,
-                  // so an older doc updated later won't override a newer submission.
+                  // Latest-by-(clueId, playerId)
+                  final latestByClueByPlayer = <String, Map<String, Map<String, dynamic>>>{};
+                  final whenMap = <String, Map<String, int>>{};
                   int _extractSubmissionMillis(Map<String, dynamic> m) {
-                    final keys = const ['createdAt', 'submittedAt', 'timestamp', 'ts'];
-                    for (final k in keys) {
-                      final v = m[k];
-                      if (v == null) continue;
-                      if (v is Timestamp) return v.millisecondsSinceEpoch;
-                      if (v is num) return v.toInt();
-                      if (v is String) {
-                        try {
-                          return DateTime.parse(v).millisecondsSinceEpoch;
-                        } catch (_) {/* ignore */}
-                      }
-                    }
-                    return 0;
+                    final ts = m['updatedAt'] ?? m['submittedAt'] ?? m['createdAt'];
+                    if (ts is Timestamp) return ts.millisecondsSinceEpoch;
+                    if (ts is int) return ts;
+                    if (ts is num) return ts.toInt();
+                    return -1;
                   }
-
-                  final Map<String, Map<String, Map<String, dynamic>>> latestByClueByPlayer = {};
-                  final Map<String, Map<String, int>> whenMap = {}; // clueId -> playerId -> ms
 
                   for (final d in subsSnap.data?.docs ?? const []) {
                     final m = d.data();
@@ -224,52 +222,31 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                     }
                   }
 
-                  // ----- Completion logic for the End Game button -----
-                  // 1) Every clue has at least one submission?
+                  // End Game gating
                   final allCluesHaveOne = clues.every(
                         (c) => (latestByClueByPlayer[c.id]?.isNotEmpty ?? false),
                   );
-
-                  // 2) Have ALL (non-host) players submitted for EVERY clue?
                   bool everyoneSubmittedAll = false;
                   if (roster.isNotEmpty) {
                     everyoneSubmittedAll = clues.every((c) {
-                      final count = latestByClueByPlayer[c.id]?.length ?? 0;
-                      return count >= roster.length;
+                      final mp = latestByClueByPlayer[c.id] ?? const {};
+                      return roster.every((r) => mp.containsKey(r.id));
                     });
                   }
 
                   return Column(
                     children: [
                       Expanded(
-                        child: ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                        child: ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                           itemCount: clues.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 16),
-                          itemBuilder: (context, index) {
-                            final clue = clues[index];
-                            final clueSubs =
-                                latestByClueByPlayer[clue.id] ?? const <String, Map>{};
-
-                            // Merge roster with any submitters not in roster.
-                            final merged = <String, _RosterEntry>{
-                              for (final r in roster) r.id: r
-                            };
-                            for (final pid in clueSubs.keys) {
-                              merged.putIfAbsent(
-                                  pid, () => _RosterEntry(id: pid, label: pid));
-                            }
-                            final finalRoster =
-                            merged.values.toList(growable: false);
-
-                            final submittedCount = clueSubs.length;
-                            final totalCount = finalRoster.isNotEmpty
-                                ? finalRoster.length
-                                : submittedCount;
+                          itemBuilder: (context, i) {
+                            final clue = clues[i];
+                            final clueSubs = latestByClueByPlayer[clue.id] ?? const <String, Map<String, dynamic>>{};
 
                             final hostHeroTag = 'host-${clue.id}';
-
                             return Container(
+                              margin: const EdgeInsets.only(bottom: 16),
                               decoration: BoxDecoration(
                                 color: cardBg,
                                 borderRadius: BorderRadius.circular(16),
@@ -284,8 +261,7 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                               child: Padding(
                                 padding: const EdgeInsets.all(12),
                                 child: Column(
-                                  crossAxisAlignment:
-                                  CrossAxisAlignment.stretch,
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
                                   children: [
                                     Row(
                                       children: [
@@ -298,26 +274,22 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                                         ),
                                         const Spacer(),
                                         Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8, vertical: 4),
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                           decoration: BoxDecoration(
-                                            color: Colors.black26,
-                                            borderRadius:
-                                            BorderRadius.circular(10),
+                                            color: Colors.black.withOpacity(0.2),
+                                            borderRadius: BorderRadius.circular(8),
                                           ),
                                           child: Text(
-                                            '$submittedCount / $totalCount submitted',
+                                            '${i + 1} / ${clues.length}',
                                             style: const TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.w600,
+                                              color: Colors.white70,
+                                              fontWeight: FontWeight.w700,
                                             ),
                                           ),
                                         ),
                                       ],
                                     ),
                                     const SizedBox(height: 8),
-
-                                    // Host clue image → tap to fullscreen (Hero)
                                     ClipRRect(
                                       borderRadius: BorderRadius.circular(12),
                                       child: AspectRatio(
@@ -326,18 +298,13 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                                           onTap: () {
                                             Navigator.of(context).push(
                                               PageRouteBuilder(
-                                                pageBuilder: (_, __, ___) =>
-                                                    _FullScreenPhoto(
-                                                      heroTag: hostHeroTag,
-                                                      networkUrl: clue.imageUrl,
-                                                      caption: 'Host Photo',
-                                                    ),
-                                                transitionsBuilder:
-                                                    (_, animation, __, child) =>
-                                                    FadeTransition(
-                                                      opacity: animation,
-                                                      child: child,
-                                                    ),
+                                                pageBuilder: (_, __, ___) => _FullScreenPhoto(
+                                                  heroTag: hostHeroTag,
+                                                  networkUrl: clue.imageUrl,
+                                                  caption: 'Host Photo',
+                                                ),
+                                                transitionsBuilder: (_, animation, __, child) =>
+                                                    FadeTransition(opacity: animation, child: child),
                                               ),
                                             );
                                           },
@@ -347,22 +314,10 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                                               clue.imageUrl,
                                               fit: BoxFit.cover,
                                               errorBuilder: (_, __, ___) =>
-                                              const Center(
-                                                child: Text(
-                                                  'Image failed to load',
-                                                  style: TextStyle(
-                                                      color: Colors.white70),
-                                                ),
-                                              ),
-                                              loadingBuilder:
-                                                  (context, child, progress) {
-                                                if (progress == null) {
-                                                  return child;
-                                                }
-                                                return const Center(
-                                                  child:
-                                                  CircularProgressIndicator(),
-                                                );
+                                              const Center(child: Icon(Icons.broken_image, color: Colors.white70)),
+                                              loadingBuilder: (context, child, progress) {
+                                                if (progress == null) return child;
+                                                return const Center(child: CircularProgressIndicator());
                                               },
                                             ),
                                           ),
@@ -371,12 +326,13 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                                     ),
                                     const SizedBox(height: 12),
 
+                                    // FIX: pass the actual roster (not finalRoster) and hostUrl for Compare
                                     _PlayerGallery(
-                                      roster: finalRoster,
+                                      roster: roster,
                                       submissionsForClue:
-                                      Map<String, Map<String, dynamic>>.from(
-                                          clueSubs),
+                                      Map<String, Map<String, dynamic>>.from(clueSubs),
                                       heroPrefix: 'clue-${clue.id}',
+                                      hostUrl: clue.imageUrl,
                                     ),
                                   ],
                                 ),
@@ -386,7 +342,6 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                         ),
                       ),
 
-                      // --------------------- End Game button ---------------------
                       SafeArea(
                         top: false,
                         minimum: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -394,89 +349,65 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
                           width: double.infinity,
                           height: 52,
                           child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF8B0000), // Dark red
+                              foregroundColor: Colors.white,            // White text
+                            ),
                             onPressed: allCluesHaveOne
                                 ? () async {
-                              // If not everyone submitted all clues, confirm.
                               if (!everyoneSubmittedAll) {
                                 final ok = await showDialog<bool>(
                                   context: context,
                                   builder: (ctx) => AlertDialog(
-                                    backgroundColor:
-                                    const Color(0xFF241A5E),
-                                    title: const Text(
-                                      'End Game?',
-                                      style:
-                                      TextStyle(color: Colors.white),
-                                    ),
+                                    backgroundColor: const Color(0xFF241A5E),
+                                    title: const Text('End game now?', style: TextStyle(color: Colors.white)),
                                     content: const Text(
-                                      'Are you sure? Some players haven’t submitted yet.',
-                                      style: TextStyle(
-                                          color: Colors.white70),
+                                      'Not every player has submitted for every clue. You can still end the game now and reveal scores.',
+                                      style: TextStyle(color: Colors.white70),
                                     ),
                                     actions: [
                                       TextButton(
-                                        onPressed: () =>
-                                            Navigator.of(ctx).pop(false),
-                                        child: const Text('No'),
+                                        onPressed: () => Navigator.of(ctx).pop(false),
+                                        child: const Text('Cancel'),
                                       ),
                                       ElevatedButton(
-                                        onPressed: () =>
-                                            Navigator.of(ctx).pop(true),
-                                        child: const Text('Yes'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF8B0000), // Match dark red inside dialog
+                                          foregroundColor: Colors.white,
+                                        ),
+                                        onPressed: () => Navigator.of(ctx).pop(true),
+                                        child: const Text('End Game'),
                                       ),
                                     ],
                                   ),
                                 );
-                                if (ok != true) {
-                                  debugPrint(
-                                      '[EndGame] Cancelled by host');
-                                  return;
-                                }
+                                if (ok != true) return;
                               }
 
                               try {
-                                debugPrint(
-                                    '[EndGame] Writing finished status...');
-                                await FirestoreRefs
-                                    .gameDoc(_repo.db, widget.gameId)
-                                    .set(
+                                await FirestoreRefs.gameDoc(_repo.db, widget.gameId).set(
                                   {
                                     'status': 'finished',
-                                    'finishedAt':
-                                    FieldValue.serverTimestamp(),
+                                    'finishedAt': FieldValue.serverTimestamp(),
                                   },
                                   SetOptions(merge: true),
                                 );
-
-                                debugPrint(
-                                    '[EndGame] Navigating to ScoreScreen...');
-                                _goToScoresOnce(); // one-way exit
+                                _goToScoresOnce();
                               } catch (e) {
                                 if (!mounted) return;
-                                ScaffoldMessenger.of(context)
-                                    .showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                        'Failed to end game: $e'),
-                                  ),
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Failed to end game: $e')),
                                 );
                               }
                             }
                                 : null,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: allCluesHaveOne
-                                  ? Colors.redAccent
-                                  : Colors.grey,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              textStyle: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
+                            child: Text(
+                              allCluesHaveOne
+                                  ? (everyoneSubmittedAll
+                                  ? 'End Game (All submissions in)'
+                                  : 'End Game (Some missing)')
+                                  : 'Waiting for first submissions…',
                             ),
-                            child: const Text('End Game'),
                           ),
                         ),
                       ),
@@ -488,18 +419,14 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
           );
         },
       ),
-      bottomNavigationBar: GameNavBar(
-        current: GameNavTab.none,
-        gameId: widget.gameId,
-      ),
     );
   }
 }
 
 class _RosterEntry {
-  final String id; // stable key (prefer deviceId or unique name)
-  final String label; // display name
-  const _RosterEntry({required this.id, required this.label});
+  final String id; // deviceId or nickname
+  final String label;
+  _RosterEntry({required this.id, required this.label});
 }
 
 class _PlayerGallery extends StatelessWidget {
@@ -507,19 +434,18 @@ class _PlayerGallery extends StatelessWidget {
     required this.roster,
     required this.submissionsForClue,
     required this.heroPrefix,
+    required this.hostUrl, // added to enable Compare
   });
 
   final List<_RosterEntry> roster;
   final Map<String, Map<String, dynamic>> submissionsForClue; // playerId -> sub
   final String heroPrefix;
+  final String hostUrl;
 
   @override
   Widget build(BuildContext context) {
     if (roster.isEmpty && submissionsForClue.isEmpty) {
-      return const Text(
-        'No submissions yet.',
-        style: TextStyle(color: Colors.white70),
-      );
+      return const Text('No submissions yet.', style: TextStyle(color: Colors.white70));
     }
 
     final tiles = <Widget>[];
@@ -533,10 +459,10 @@ class _PlayerGallery extends StatelessWidget {
           imageUrl: sub?['imageUrl'] as String?,
           heroTag: '$heroPrefix-${r.id}',
           score: (sub?['score'] as num?)?.toDouble(),
+          hostUrl: hostUrl,
         ));
       }
     } else {
-      // Fallback: no roster → iterate known submitters
       submissionsForClue.forEach((pid, sub) {
         tiles.add(_PlayerTile(
           playerId: pid,
@@ -544,6 +470,7 @@ class _PlayerGallery extends StatelessWidget {
           imageUrl: sub['imageUrl'] as String?,
           heroTag: '$heroPrefix-$pid',
           score: (sub['score'] as num?)?.toDouble(),
+          hostUrl: hostUrl,
         ));
       });
     }
@@ -563,6 +490,7 @@ class _PlayerTile extends StatelessWidget {
     required this.imageUrl,
     required this.heroTag,
     this.score,
+    required this.hostUrl,
   });
 
   final String playerId;
@@ -570,6 +498,7 @@ class _PlayerTile extends StatelessWidget {
   final String? imageUrl; // null => not submitted
   final String heroTag;
   final double? score;
+  final String hostUrl;
 
   String _initials(String name) {
     final parts = name.trim().split(RegExp(r'\s+'));
@@ -607,35 +536,27 @@ class _PlayerTile extends StatelessWidget {
               height: 72,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                border: Border.all(color: Colors.white38),
-                color: Colors.transparent,
+                color: const Color(0xFF100A1E),
                 borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white24),
               ),
               child: Text(
                 _initials(label),
                 style: const TextStyle(
-                  color: Colors.white70,
+                  color: Colors.white54,
                   fontWeight: FontWeight.bold,
-                  fontSize: 18,
+                  fontSize: 20,
                 ),
               ),
             ),
             const SizedBox(height: 6),
             nameLabel,
+            const SizedBox(height: 2),
+            const Text('No submission', style: TextStyle(color: Colors.white54, fontSize: 11)),
           ],
         ),
       );
     }
-
-    final scoreSubtitle = Text(
-      score == null ? 'Scoring…' : 'Score: ${score!.toStringAsFixed(0)}',
-      overflow: TextOverflow.ellipsis,
-      style: const TextStyle(
-        color: Colors.white70,
-        fontWeight: FontWeight.w600,
-        fontSize: 11,
-      ),
-    );
 
     return SizedBox(
       width: 84,
@@ -645,15 +566,14 @@ class _PlayerTile extends StatelessWidget {
           InkWell(
             borderRadius: BorderRadius.circular(12),
             onTap: () {
-              final caption = score == null
-                  ? '$label • Scoring…'
-                  : '$label • Score ${score!.toStringAsFixed(0)}';
+              if (imageUrl == null || imageUrl!.isEmpty) return;
               Navigator.of(context).push(
                 PageRouteBuilder(
-                  pageBuilder: (_, __, ___) => _FullScreenPhoto(
-                    heroTag: heroTag,
-                    networkUrl: imageUrl!,
-                    caption: caption,
+                  pageBuilder: (_, __, ___) => _CompareImagesScreen(
+                    hostUrl: hostUrl,
+                    playerUrl: imageUrl!,
+                    hostHero: 'host_' + heroTag,
+                    playerHero: heroTag,
                   ),
                   transitionsBuilder: (_, animation, __, child) =>
                       FadeTransition(opacity: animation, child: child),
@@ -675,13 +595,33 @@ class _PlayerTile extends StatelessWidget {
                           errorBuilder: (_, __, ___) => Container(
                             color: const Color(0xFF3E2C8B),
                             alignment: Alignment.center,
-                            child: const Icon(Icons.broken_image,
-                                color: Colors.white70),
+                            child: const Icon(Icons.broken_image, color: Colors.white70),
                           ),
                           loadingBuilder: (context, child, progress) {
                             if (progress == null) return child;
-                            return const Center(
-                                child: CircularProgressIndicator());
+                            return const Center(child: CircularProgressIndicator());
+                          },
+                        ),
+                      ),
+                      Positioned(
+                        right: 6,
+                        top: 6,
+                        child: _TinyTagButton(
+                          text: 'Compare',
+                          onTap: () {
+                            if (imageUrl == null || imageUrl!.isEmpty) return;
+                            Navigator.of(context).push(
+                              PageRouteBuilder(
+                                pageBuilder: (_, __, ___) => _CompareImagesScreen(
+                                  hostUrl: hostUrl,
+                                  playerUrl: imageUrl!,
+                                  hostHero: 'host_' + heroTag,
+                                  playerHero: heroTag,
+                                ),
+                                transitionsBuilder: (_, animation, __, child) =>
+                                    FadeTransition(opacity: animation, child: child),
+                              ),
+                            );
                           },
                         ),
                       ),
@@ -699,7 +639,10 @@ class _PlayerTile extends StatelessWidget {
           const SizedBox(height: 6),
           nameLabel,
           const SizedBox(height: 2),
-          scoreSubtitle,
+          Text(
+            score == null ? 'Scoring…' : 'Score ${score!.toStringAsFixed(0)}',
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
         ],
       ),
     );
@@ -712,23 +655,27 @@ class _ScoreBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final pending = score == null;
-    final text = pending ? '…' : score!.toStringAsFixed(0);
-
     Color bg;
     Color fg;
-    if (pending) {
-      bg = Colors.black54;
-      fg = Colors.white;
-    } else if (score! >= 80) {
-      bg = Colors.greenAccent.withValues(alpha: 0.9);
-      fg = Colors.black;
-    } else if (score! >= 50) {
-      bg = Colors.orangeAccent.withValues(alpha: 0.9);
-      fg = Colors.black;
+    String text;
+
+    if (score == null) {
+      bg = Colors.white10;
+      fg = Colors.white70;
+      text = '…';
     } else {
-      bg = Colors.white24;
-      fg = Colors.white;
+      final v = score!.clamp(0, 100).toInt();
+      text = '$v';
+      if (v >= 80) {
+        bg = Colors.green.withOpacity(0.3);
+        fg = Colors.white;
+      } else if (v >= 50) {
+        bg = Colors.orange.withOpacity(0.3);
+        fg = Colors.white;
+      } else {
+        bg = Colors.red.withOpacity(0.3);
+        fg = Colors.white;
+      }
     }
 
     return Container(
@@ -739,17 +686,13 @@ class _ScoreBadge extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: TextStyle(
-          color: fg,
-          fontWeight: FontWeight.w800,
-          fontSize: 12,
-        ),
+        style: TextStyle(color: fg, fontWeight: FontWeight.w800, fontSize: 12),
       ),
     );
   }
 }
 
-/// Simple full-screen network image with pinch-to-zoom + Hero + caption
+/// Simple full-screen network/asset/file image with pinch-to-zoom + Hero + caption
 class _FullScreenPhoto extends StatelessWidget {
   const _FullScreenPhoto({
     required this.heroTag,
@@ -767,55 +710,170 @@ class _FullScreenPhoto extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Widget image = networkUrl != null
-        ? Image.network(networkUrl!, fit: BoxFit.contain)
-        : (assetPath != null
-        ? Image.asset(assetPath!, fit: BoxFit.contain)
-        : Image.file(File(filePath!), fit: BoxFit.contain));
+    const darkBg = Color(0xFF3E2C8B);
+
+    Widget imageWidget;
+    if (networkUrl != null && networkUrl!.isNotEmpty) {
+      imageWidget = Image.network(
+        networkUrl!,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image, color: Colors.white70)),
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return const Center(child: CircularProgressIndicator());
+        },
+      );
+    } else if (assetPath != null && assetPath!.isNotEmpty) {
+      imageWidget = Image.asset(assetPath!, fit: BoxFit.contain);
+    } else if (filePath != null && filePath!.isNotEmpty) {
+      imageWidget = Image.file(File(filePath!), fit: BoxFit.contain);
+    } else {
+      imageWidget = const Center(child: Icon(Icons.broken_image, color: Colors.white70));
+    }
 
     return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
+      backgroundColor: darkBg,
+      appBar: AppBar(backgroundColor: darkBg),
       body: Stack(
         children: [
           Center(
             child: Hero(
               tag: heroTag,
-              child: InteractiveViewer(
-                minScale: 0.5,
-                maxScale: 4.0,
-                child: image,
-              ),
+              child: InteractiveViewer(minScale: 0.5, maxScale: 5, child: imageWidget),
             ),
           ),
-          if (caption != null)
+          if (caption != null && caption!.trim().isNotEmpty)
             Positioned(
-              left: 16,
-              right: 16,
-              bottom: 16,
-              child: SafeArea(
-                top: false,
-                child: Container(
-                  padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    caption!,
-                    textAlign: TextAlign.center,
-                    style:
-                    const TextStyle(color: Colors.white, fontSize: 14),
-                  ),
+              left: 12,
+              right: 12,
+              bottom: 24,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black45,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  caption!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
                 ),
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Small pill-style button for overlay chips (e.g., Compare)
+class _TinyTagButton extends StatelessWidget {
+  const _TinyTagButton({required this.text, required this.onTap});
+  final String text;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFF100A1E).withOpacity(0.8),
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Text(
+            text,
+            style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700, fontSize: 12),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Side-by-side compare screen with pinch-zoom + optional Hero
+class _CompareImagesScreen extends StatelessWidget {
+  const _CompareImagesScreen({
+    required this.hostUrl,
+    required this.playerUrl,
+    required this.hostHero,
+    required this.playerHero,
+  });
+
+  final String hostUrl;
+  final String playerUrl;
+  final String hostHero;
+  final String playerHero;
+
+  @override
+  Widget build(BuildContext context) {
+    const darkBg = Color(0xFF3E2C8B);
+
+    Widget zoomable(String url, {String? hero}) {
+      final img = Image.network(
+        url,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) =>
+        const Center(child: Text('Image failed to load', style: TextStyle(color: Colors.white70))),
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return const Center(child: CircularProgressIndicator());
+        },
+      );
+      final viewer = InteractiveViewer(minScale: 0.5, maxScale: 5, child: img);
+      return hero == null ? viewer : Hero(tag: hero, child: viewer);
+    }
+
+    return Scaffold(
+      backgroundColor: darkBg,
+      appBar: AppBar(backgroundColor: darkBg, title: const Text('Compare Images')),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isWide = constraints.maxWidth >= 700;
+          if (isWide) {
+            return Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Text('Host Clue', style: TextStyle(color: Colors.white70)),
+                      ),
+                      Expanded(child: Center(child: zoomable(hostUrl, hero: hostHero))),
+                    ],
+                  ),
+                ),
+                const VerticalDivider(width: 1, color: Colors.black26),
+                Expanded(
+                  child: Column(
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Text('Player', style: TextStyle(color: Colors.white70)),
+                      ),
+                      Expanded(child: Center(child: zoomable(playerUrl, hero: playerHero))),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }
+          // Stacked for phones
+          return ListView(
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 12),
+                child: Center(child: Text('Host Clue', style: TextStyle(color: Colors.white70))),
+              ),
+              SizedBox(height: constraints.maxHeight * 0.45, child: zoomable(hostUrl, hero: hostHero)),
+              const Divider(height: 16, thickness: 1, color: Colors.black26),
+              const Center(child: Text('Player', style: TextStyle(color: Colors.white70))),
+              SizedBox(height: constraints.maxHeight * 0.45, child: zoomable(playerUrl, hero: playerHero)),
+              const SizedBox(height: 12),
+            ],
+          );
+        },
       ),
     );
   }

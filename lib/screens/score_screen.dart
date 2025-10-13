@@ -6,6 +6,7 @@ import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/screens/home_screen.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
+import 'package:snaphunt/models/clue_model.dart';
 
 class ScoreScreen extends StatefulWidget {
   final String gameId;
@@ -70,6 +71,7 @@ class _ScoreScreenState extends State<ScoreScreen> {
             // ---------------- Build roster (EXCLUDE HOST) ----------------
             final Map<String, String> roster = {}; // playerId -> label
             String hostDeviceId = '';
+            String hostName = 'Host';
             Map<String, dynamic> roles = const {};
             final rawPlayers = <dynamic>[];
 
@@ -81,7 +83,7 @@ class _ScoreScreenState extends State<ScoreScreen> {
               if (rp is List) rawPlayers.addAll(rp);
             }
 
-            // Detect legacy host nickname so we can exclude it
+            // Detect legacy host nickname and capture hostName
             final hostNicknames = <String>{};
             for (final e in rawPlayers) {
               if (e is Map) {
@@ -90,7 +92,19 @@ class _ScoreScreenState extends State<ScoreScreen> {
                 final nick = (m['nickname'] as String?)?.trim() ?? '';
                 final isHost = (hostDeviceId.isNotEmpty && did == hostDeviceId) ||
                     (did.isNotEmpty && roles[did] == 'host');
-                if (isHost && nick.isNotEmpty) hostNicknames.add(nick);
+                if (isHost) {
+                  if (nick.isNotEmpty) {
+                    hostNicknames.add(nick);
+                    hostName = nick;
+                  } else {
+                    hostName = 'Host';
+                  }
+                }
+              } else if (e is String) {
+                // Legacy string-only entry can't reliably identify host unless it matches a known host nickname
+                if (hostNicknames.contains(e.trim())) {
+                  hostName = e.trim();
+                }
               }
             }
 
@@ -241,7 +255,7 @@ class _ScoreScreenState extends State<ScoreScreen> {
                         }
                       });
 
-                      final avg = sum / totalClues;
+                      final avg = totalClues == 0 ? 0.0 : (sum / totalClues);
 
                       rows.add(_AvgRow(
                         playerId: pid,
@@ -312,9 +326,23 @@ class _ScoreScreenState extends State<ScoreScreen> {
                         Expanded(
                           child: Column(
                             children: [
+                              // Host label
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    'Host: $hostName',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ),
                               // Winners block
                               Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                                 child: Container(
                                   decoration: BoxDecoration(
                                     color: cardBg,
@@ -333,17 +361,11 @@ class _ScoreScreenState extends State<ScoreScreen> {
                                       ),
                                       const SizedBox(height: 12),
                                       Row(
-                                        mainAxisAlignment:
-                                        MainAxisAlignment.spaceEvenly,
+                                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                                         children: [
-                                          if (top.length >= 2)
-                                            _PodiumTile(rank: 2, row: top[1]),
-                                          _PodiumTile(
-                                              rank: 1,
-                                              row: top[0],
-                                              highlight: true),
-                                          if (top.length >= 3)
-                                            _PodiumTile(rank: 3, row: top[2]),
+                                          if (top.length >= 2) _PodiumTile(rank: 2, row: top[1]),
+                                          _PodiumTile(rank: 1, row: top[0], highlight: true),
+                                          if (top.length >= 3) _PodiumTile(rank: 3, row: top[2]),
                                         ],
                                       ),
                                     ],
@@ -351,7 +373,7 @@ class _ScoreScreenState extends State<ScoreScreen> {
                                 ),
                               ),
 
-                              // Full leaderboard WITH a single-row horizontal scroller
+                              // Full leaderboard (thumbnails removed)
                               Expanded(
                                 child: Padding(
                                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -361,23 +383,32 @@ class _ScoreScreenState extends State<ScoreScreen> {
                                       borderRadius: BorderRadius.circular(16),
                                     ),
                                     child: ListView.separated(
-                                      padding:
-                                      const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
                                       itemCount: rows.length,
-                                      separatorBuilder: (_, __) => const Divider(
-                                          color: Colors.white24, height: 1),
+                                      separatorBuilder: (_, __) =>
+                                      const Divider(color: Colors.white24, height: 1),
                                       itemBuilder: (context, i) {
                                         final r = rows[i];
                                         return Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                              vertical: 6),
+                                          padding: const EdgeInsets.symmetric(vertical: 6),
                                           child: Column(
-                                            crossAxisAlignment:
-                                            CrossAxisAlignment.start,
+                                            crossAxisAlignment: CrossAxisAlignment.start,
                                             children: [
                                               ListTile(
-                                                leading:
-                                                _CircleInitials(name: r.name),
+                                                onTap: () {
+                                                  // Tap name/row → compare view, preserving clue order
+                                                  Navigator.of(context).push(
+                                                    MaterialPageRoute(
+                                                      builder: (_) => _PlayerSubmissionCompareScreen(
+                                                        gameId: widget.gameId,
+                                                        playerId: r.playerId,
+                                                        playerLabel: r.name,
+                                                        repository: _repo,
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                                leading: _CircleInitials(name: r.name),
                                                 title: Text(
                                                   r.name,
                                                   style: const TextStyle(
@@ -389,8 +420,7 @@ class _ScoreScreenState extends State<ScoreScreen> {
                                                   totalClues > 0
                                                       ? 'Avg across $totalClues clue(s) • ${r.count} submission(s)'
                                                       : 'No clues',
-                                                  style: const TextStyle(
-                                                      color: Colors.white70),
+                                                  style: const TextStyle(color: Colors.white70),
                                                 ),
                                                 trailing: Text(
                                                   r.avg.toStringAsFixed(0),
@@ -401,102 +431,7 @@ class _ScoreScreenState extends State<ScoreScreen> {
                                                   ),
                                                 ),
                                               ),
-
-                                              // >>> SINGLE-LINE HORIZONTAL SCROLLER <<<
-                                              if (r.imageUrls.isNotEmpty)
-                                                SizedBox(
-                                                  height: 78,
-                                                  child: ScrollConfiguration(
-                                                    behavior: const _NoGlowBehavior(),
-                                                    child: SingleChildScrollView(
-                                                      scrollDirection:
-                                                      Axis.horizontal,
-                                                      physics:
-                                                      const BouncingScrollPhysics(),
-                                                      padding:
-                                                      const EdgeInsets.symmetric(
-                                                          horizontal: 12),
-                                                      child: Row(
-                                                        children: [
-                                                          for (int idx = 0;
-                                                          idx < r.imageUrls.length;
-                                                          idx++) ...[
-                                                            GestureDetector(
-                                                              onTap: () {
-                                                                Navigator.of(context).push(
-                                                                  MaterialPageRoute(
-                                                                    builder: (_) =>
-                                                                        _ImageViewerPage(
-                                                                          imageUrls:
-                                                                          r.imageUrls,
-                                                                          initialIndex: idx,
-                                                                          title: r.name,
-                                                                        ),
-                                                                  ),
-                                                                );
-                                                              },
-                                                              child: ClipRRect(
-                                                                borderRadius:
-                                                                BorderRadius
-                                                                    .circular(
-                                                                    10),
-                                                                child: AspectRatio(
-                                                                  aspectRatio: 1,
-                                                                  child:
-                                                                  Image.network(
-                                                                    r.imageUrls[idx],
-                                                                    fit: BoxFit.cover,
-                                                                    loadingBuilder:
-                                                                        (c, w, p) {
-                                                                      if (p == null) {
-                                                                        return w;
-                                                                      }
-                                                                      return Container(
-                                                                        color: Colors
-                                                                            .black12,
-                                                                        alignment:
-                                                                        Alignment
-                                                                            .center,
-                                                                        child:
-                                                                        const SizedBox(
-                                                                          width: 18,
-                                                                          height: 18,
-                                                                          child:
-                                                                          CircularProgressIndicator(
-                                                                            strokeWidth:
-                                                                            2,
-                                                                          ),
-                                                                        ),
-                                                                      );
-                                                                    },
-                                                                    errorBuilder:
-                                                                        (c, e, st) {
-                                                                      return Container(
-                                                                        color: Colors
-                                                                            .black26,
-                                                                        alignment:
-                                                                        Alignment
-                                                                            .center,
-                                                                        child:
-                                                                        const Icon(
-                                                                          Icons
-                                                                              .broken_image,
-                                                                          color: Colors
-                                                                              .white70,
-                                                                        ),
-                                                                      );
-                                                                    },
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                            ),
-                                                            const SizedBox(width: 8),
-                                                          ],
-                                                        ],
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
+                                              // (Thumbnails removed per request)
                                             ],
                                           ),
                                         );
@@ -558,16 +493,8 @@ class _ScoreScreenState extends State<ScoreScreen> {
 class _NoGlowBehavior extends ScrollBehavior {
   const _NoGlowBehavior();
   @override
-  Widget buildViewportChrome(
-      BuildContext context, Widget child, AxisDirection axisDirection) {
-    return child;
-  }
-
-  // For newer Flutter versions (no glow):
-  @override
   Widget buildOverscrollIndicator(
-      BuildContext context, Widget child, ScrollableDetails details) =>
-      child;
+      BuildContext context, Widget child, ScrollableDetails details) => child;
 }
 
 class _LatestSub {
@@ -743,6 +670,243 @@ class _ImageViewerPageState extends State<_ImageViewerPage> {
           );
         },
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drill-down compare screen: preserves clue ORDER from /clues,
+// shows Host vs Player per clue with that clue's score.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PlayerSubmissionCompareScreen extends StatelessWidget {
+  const _PlayerSubmissionCompareScreen({
+    required this.gameId,
+    required this.playerId,
+    required this.playerLabel,
+    required this.repository,
+  });
+
+  final String gameId;
+  final String playerId;
+  final String playerLabel;
+  final GameRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    const darkBg = Color(0xFF3E2C8B);
+    const cardBg = Color(0xFF5D4BB2);
+
+    return Scaffold(
+      backgroundColor: darkBg,
+      appBar: AppBar(
+        backgroundColor: darkBg,
+        title: Text('Submissions — $playerLabel'),
+        centerTitle: true,
+      ),
+      body: StreamBuilder<List<Clue>>(
+        stream: repository.streamClues(gameId),
+        builder: (context, cluesSnap) {
+          if (cluesSnap.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (cluesSnap.hasError) {
+            return Center(
+              child: Text('Error loading clues: ${cluesSnap.error}',
+                  style: const TextStyle(color: Colors.white)),
+            );
+          }
+
+          // Preserve ORDER from the query (as displayed on host/player screens)
+          final orderedClues = cluesSnap.data ?? const <Clue>[];
+
+          // Stream all submissions and pick latest for THIS player
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: FirestoreRefs
+                .submissions(FirebaseFirestore.instance, gameId)
+                .orderBy('createdAt', descending: true)
+                .snapshots(),
+            builder: (context, subsSnap) {
+              if (subsSnap.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (subsSnap.hasError) {
+                return Center(
+                  child: Text('Error loading submissions: ${subsSnap.error}',
+                      style: const TextStyle(color: Colors.white)),
+                );
+              }
+
+              // latest submission per clue for this player
+              final latestForPlayer = <String, Map<String, dynamic>>{}; // clueId -> sub
+              int _when(Map<String, dynamic> m) {
+                final ts = m['updatedAt'] ?? m['submittedAt'] ?? m['createdAt'];
+                if (ts is Timestamp) return ts.millisecondsSinceEpoch;
+                if (ts is int) return ts;
+                if (ts is num) return ts.toInt();
+                return -1;
+              }
+
+              for (final d in subsSnap.data?.docs ?? const []) {
+                final m = d.data();
+                final pid = (m['playerId'] as String?)?.trim() ?? '';
+                if (pid != playerId) continue;
+                final clueId = (m['clueId'] as String?)?.trim() ?? '';
+                if (clueId.isEmpty) continue;
+                final prev = latestForPlayer[clueId];
+                if (prev == null || _when(m) >= _when(prev)) {
+                  latestForPlayer[clueId] = m;
+                }
+              }
+
+              if (orderedClues.isEmpty) {
+                return const Center(
+                  child: Text('No clues found.', style: TextStyle(color: Colors.white70)),
+                );
+              }
+
+              return ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                itemCount: orderedClues.length,
+                itemBuilder: (context, index) {
+                  final c = orderedClues[index];
+                  final clueId = c.id;
+                  final hostUrl = c.imageUrl ?? '';
+                  final playerSub = latestForPlayer[clueId];
+                  final playerUrl = (playerSub?['imageUrl'] as String?) ?? '';
+                  final score = (playerSub?['score'] as num?)?.toDouble();
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: cardBg,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              'Clue ${index + 1}',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const Spacer(),
+                            _ScoreBadgeSmall(score: score),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final isWide = constraints.maxWidth >= 700;
+                            final left = _ZoomImageBox(label: 'Host', url: hostUrl);
+                            final right = _ZoomImageBox(
+                              label: 'Player',
+                              url: playerUrl,
+                              emptyHint: 'No submission',
+                            );
+                            if (isWide) {
+                              return Row(
+                                children: [
+                                  Expanded(child: left),
+                                  const SizedBox(width: 8),
+                                  Expanded(child: right),
+                                ],
+                              );
+                            }
+                            return Column(
+                              children: [
+                                left,
+                                const SizedBox(height: 8),
+                                right,
+                              ],
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ScoreBadgeSmall extends StatelessWidget {
+  const _ScoreBadgeSmall({this.score});
+  final double? score;
+  @override
+  Widget build(BuildContext context) {
+    if (score == null) {
+      return const Text('—',
+          style: TextStyle(color: Colors.white54, fontWeight: FontWeight.w700));
+    }
+    final v = score!.clamp(0, 100).toInt();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        'Score $v',
+        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+}
+
+class _ZoomImageBox extends StatelessWidget {
+  const _ZoomImageBox({required this.label, required this.url, this.emptyHint});
+  final String label;
+  final String url;
+  final String? emptyHint;
+
+  @override
+  Widget build(BuildContext context) {
+    final has = url.isNotEmpty;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white70)),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: AspectRatio(
+            aspectRatio: 16 / 9,
+            child: has
+                ? InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 5,
+              child: Image.network(
+                url,
+                fit: BoxFit.contain,
+                loadingBuilder: (c, w, p) =>
+                p == null ? w : const Center(child: CircularProgressIndicator()),
+                errorBuilder: (c, e, st) => const Center(
+                  child: Icon(Icons.broken_image, color: Colors.white70),
+                ),
+              ),
+            )
+                : Container(
+              alignment: Alignment.center,
+              color: const Color(0xFF100A1E),
+              child: Text(
+                emptyHint ?? 'Missing image',
+                style: const TextStyle(color: Colors.white54),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

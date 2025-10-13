@@ -14,9 +14,9 @@ import 'package:snaphunt/models/clue_model.dart';
 import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/screens/score_screen.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
-// REMOVED (unused): import 'package:snaphunt/services/camera_capture.dart';
 import 'package:snaphunt/services/route_transitions.dart';
 import 'package:snaphunt/screens/in_app_camera_pip_screen.dart';
+import 'package:snaphunt/services/retry_tokens.dart';
 
 class ClueSubmissionScreen extends StatefulWidget {
   const ClueSubmissionScreen({
@@ -440,9 +440,16 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
                 }
 
                 return ListView.builder(
+                  key: PageStorageKey('clue_list_${widget.gameId}_${widget.playerId}'),
                   padding: const EdgeInsets.all(16),
+                  // CHANGED: remove the header row → only render clues
                   itemCount: clues.length,
                   itemBuilder: (context, i) {
+                    // Compute global tokens (used to disable the resubmit button; display moved to bottom nav)
+                    final totalTokens = computeTokenTotal(clues.length);
+                    final tokensUsed  = computeTokensUsed(_attempts);
+                    final tokensLeft  = math.max(0, totalTokens - tokensUsed);
+
                     final clue = clues[i];
                     final clueId = clue.id;        // non-nullable in your model
                     final hostUrl = clue.imageUrl; // non-nullable in your model
@@ -458,6 +465,8 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
                         ? (_kMaxAttemptsPerClue - attempts)
                         : 0;
                     final isOutOfRetries = hasSubmitted && remainingRetries <= 0;
+                    // Same token budget as above
+                    final noTokensLeftForRetry = hasSubmitted && tokensLeft <= 0;
 
                     return Card(
                       color: const Color(0xFF2E1F66),
@@ -502,21 +511,49 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
                             ),
                             const SizedBox(height: 8),
                             if (myThumb != null)
-                              Center(
-                                child: GestureDetector(
-                                  onTap: () => _openFullScreenNetwork(myThumb, heroThumb, title: 'Your Photo'),
-                                  child: Hero(
-                                    tag: heroThumb,
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(12),
-                                      child: SizedBox(
-                                        height: 120,
-                                        width: 120,
-                                        child: Image.network(myThumb, fit: BoxFit.cover),
+                            // CHANGED: show thumbnail + (optional) LOW/MID/HIGH hint pill
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Expanded(
+                                    child: Center(
+                                      child: GestureDetector(
+                                        onTap: () => _openFullScreenNetwork(myThumb, heroThumb, title: 'Your Photo'),
+                                        child: Hero(
+                                          tag: heroThumb,
+                                          child: ClipRRect(
+                                            borderRadius: BorderRadius.circular(12),
+                                            child: SizedBox(
+                                              height: 120,
+                                              width: 120,
+                                              child: Image.network(myThumb, fit: BoxFit.cover),
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
-                                ),
+                                  const SizedBox(width: 12),
+                                  // NEW: live bucket hint only when scored (no numeric leak)
+                                  StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                                    stream: FirestoreRefs
+                                        .submissions(_repo.db, widget.gameId)
+                                        .doc('${widget.playerId}__$clueId')
+                                        .snapshots(),
+                                    builder: (context, snapDoc) {
+                                      if (!snapDoc.hasData || !snapDoc.data!.exists) {
+                                        return const SizedBox.shrink();
+                                      }
+                                      final m = snapDoc.data!.data()!;
+                                      if ((m['status'] as String?) != 'scored') {
+                                        return const SizedBox.shrink();
+                                      }
+                                      final s = (m['score'] as num?)?.toDouble();
+                                      if (s == null) return const SizedBox.shrink();
+                                      return _ScoreHintPill(score: s);
+                                    },
+                                  ),
+                                ],
                               ),
 
                             // Compare button (only when submission exists)
@@ -537,7 +574,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
 
                             const SizedBox(height: 12),
                             ElevatedButton.icon(
-                              onPressed: _busy || isOutOfRetries
+                              onPressed: _busy || isOutOfRetries || noTokensLeftForRetry
                                   ? null
                                   : () => _submit(clueId: clueId, hostUrl: hostUrl),
                               icon: const Icon(Icons.photo_camera),
@@ -545,7 +582,9 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
                                 hasSubmitted
                                     ? (isOutOfRetries
                                     ? 'No retries left'
-                                    : 'Resubmit Photo (${remainingRetries} left)')
+                                    : (noTokensLeftForRetry
+                                    ? 'No tokens left'
+                                    : 'Resubmit Photo (${remainingRetries} left)'))
                                     : 'Submit Photo',
                               ),
                               style: ElevatedButton.styleFrom(
@@ -566,10 +605,21 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
             ProgressOverlay(controller: _progress, title: 'Submitting & Scoring'),
           ],
         ),
-        // ✅ Bottom nav wired here (we are inside the State class → widget.gameId is valid)
-        bottomNavigationBar: GameNavBar(
-          current: GameNavTab.none,
-          gameId: widget.gameId,
+        // ✅ Bottom nav wired here with always-visible tokens
+        bottomNavigationBar: StreamBuilder<List<Clue>>(
+          stream: _repo.streamClues(widget.gameId),
+          builder: (context, snapshot) {
+            final count = snapshot.data?.length ?? 0;
+            final totalTokens = computeTokenTotal(count);
+            final tokensUsed  = computeTokensUsed(_attempts);
+            final tokensLeft  = math.max(0, totalTokens - tokensUsed);
+            return GameNavBar(
+              current: GameNavTab.none,
+              gameId: widget.gameId,
+              // Pass tokensText if we know clue count; omit when 0 so layout matches your earlier behavior
+              tokensText: count == 0 ? null : 'Tokens ${tokensLeft.toString()} / ${totalTokens.toString()}',
+            );
+          },
         ),
       ),
     );
@@ -741,6 +791,49 @@ class _CompareImagesScreen extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+// ── Score bucket hint pill ───────────────────────────────────────────────────
+String _scoreBucket(double s) {
+  final v = s.clamp(0, 100);
+  if (v < 30) return 'LOW';
+  if (v < 70) return 'MID';
+  return 'HIGH';
+}
+
+class _ScoreHintPill extends StatelessWidget {
+  const _ScoreHintPill({required this.score});
+  final double score;
+
+  Color _color() {
+    final v = score.clamp(0, 100);
+    if (v < 30) return const Color(0xFFE53935);
+    if (v < 70) return const Color(0xFFFFA000);
+    return const Color(0xFF43A047);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label = _scoreBucket(score);
+    final c = _color();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: c.withOpacity(0.18),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: c.withOpacity(0.55)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: c,
+          fontWeight: FontWeight.w900,
+          fontSize: 14,
+          letterSpacing: 0.4,
+        ),
       ),
     );
   }
