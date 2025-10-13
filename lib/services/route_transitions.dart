@@ -2,7 +2,7 @@
 import 'package:flutter/material.dart';
 
 /// Global speed knob: >1.0 = slower, <1.0 = faster.
-const double kGlobalMotionScale = 1.0;
+const double kGlobalMotionScale = 0.3;
 
 /// Base durations (pre-scale). We’ll multiply by kGlobalMotionScale at runtime.
 const Duration _kSlideInBase = Duration(milliseconds: 900);

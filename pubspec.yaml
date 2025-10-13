@@ -42,6 +42,29 @@ dev_dependencies:
   fake_cloud_firestore: ^2.5.2
   mocktail: ^1.0.2
   firebase_storage_mocks: ^0.6.0
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.4.0
+
+flutter_native_splash:
+  android: true
+  ios: false
+  web: false
+
+  fullscreen: true
+  color: "#100A1E"
+  image: assets/brand/snaphunt_splash_screen.png
+
+  android_12:
+    color: "#100A1E"
+    # On Android 12, this must be an icon-like asset; full posters are not supported by the system splash.
+    image: assets/icons/snaphunt_splash_screen.png
+
+flutter_launcher_icons:
+  android: "adaptive"
+  image_path: "assets/icons/snaphunt_app_icon.png"
+  adaptive_icon_foreground: "assets/icons/snaphunt_app_icon.png"
+  adaptive_icon_background: "#3E2C8B"
+
 
 flutter:
   uses-material-design: true
@@ -56,3 +79,5 @@ flutter:
     - assets/icons/map.svg
     - assets/icons/info-circle.svg
     - assets/pictures/picture.png
+    - assets/brand/snaphunt_splash_screen.png
+    - assets/icons/snaphunt_app_icon.png
