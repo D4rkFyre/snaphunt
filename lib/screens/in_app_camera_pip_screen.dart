@@ -1,3 +1,5 @@
+// lib/screens/in_app_camera_pip_screen.dart
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
@@ -6,7 +8,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 class InAppCameraPipScreen extends StatefulWidget {
   final String hostClueImageUrl;
-  final bool clueAbove; // kept for compatibility; if true shows a bar above instead of PiP
+  final bool clueAbove; // for compatibility; if true shows a bar above instead of PiP
 
   const InAppCameraPipScreen({
     super.key,
@@ -29,6 +31,9 @@ class _InAppCameraPipScreenState extends State<InAppCameraPipScreen> {
   double _pipWidth = 140.0;
   bool _pipLarge = false;
 
+  // If null, we fall back to 4/3 as a reasonable default.
+  double? _hostAspect; // width / height
+
   // For dragging
   Offset? _dragStartGlobal;
   Offset? _dragStartPipOffset;
@@ -37,6 +42,35 @@ class _InAppCameraPipScreenState extends State<InAppCameraPipScreen> {
   void initState() {
     super.initState();
     _initOnce();
+    _probeHostImageAspect();
+  }
+
+  Future<void> _probeHostImageAspect() async {
+    try {
+      final ImageProvider provider = NetworkImage(widget.hostClueImageUrl);
+      final ImageStream stream = provider.resolve(const ImageConfiguration());
+      final completer = Completer<ImageInfo>();
+      late final ImageStreamListener listener;
+      listener = ImageStreamListener((ImageInfo info, bool _) {
+        completer.complete(info);
+        stream.removeListener(listener);
+      }, onError: (error, stack) {
+        if (!completer.isCompleted) completer.completeError(error, stack);
+        stream.removeListener(listener);
+      });
+      stream.addListener(listener);
+
+      final info = await completer.future;
+      final w = info.image.width.toDouble();
+      final h = info.image.height.toDouble();
+      if (w > 0 && h > 0 && mounted) {
+        setState(() {
+          _hostAspect = w / h; // width / height
+        });
+      }
+    } catch (_) {
+      // If this fails (bad url, offline, etc.), keep the default ratio.
+    }
   }
 
   Future<void> _initOnce() async {
@@ -118,17 +152,25 @@ class _InAppCameraPipScreenState extends State<InAppCameraPipScreen> {
     });
   }
 
+  // wrapped in an AspectRatio that matches the host image (or 4/3 fallback).
   Widget _pipThumb() {
-    // Keep aspect 4:3 for most clue photos; adjust if you store aspect somewhere
+    final aspect = _hostAspect ?? (4 / 3);
     return ClipRRect(
       borderRadius: BorderRadius.circular(10),
       child: AspectRatio(
-        aspectRatio: 4 / 3,
-        child: Image.network(
-          widget.hostClueImageUrl,
-          fit: BoxFit.cover,
-          loadingBuilder: (c, w, p) => p == null ? w : const Center(child: CircularProgressIndicator()),
-          errorBuilder: (c, e, s) => const ColoredBox(color: Colors.black26),
+        aspectRatio: aspect,
+        child: Container(
+          color: Colors.black, // letterbox background
+          alignment: Alignment.center,
+          child: Image.network(
+            widget.hostClueImageUrl,
+            fit: BoxFit.contain,
+            // Optionally hint a smaller decode on low-end devices:
+            // cacheWidth: 800,
+            loadingBuilder: (c, w, p) =>
+            p == null ? w : const Center(child: CircularProgressIndicator()),
+            errorBuilder: (c, e, s) => const ColoredBox(color: Colors.black26),
+          ),
         ),
       ),
     );
@@ -182,9 +224,12 @@ class _InAppCameraPipScreenState extends State<InAppCameraPipScreen> {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final aspect = _hostAspect ?? (4 / 3);
+            final pipHeight = _pipWidth / aspect;
+
             // Keep PiP within bounds after orientation/size changes
             final maxX = constraints.maxWidth - _pipWidth - 12;
-            final maxY = constraints.maxHeight - (_pipWidth * 3 / 4) - 12; // 4:3 height
+            final maxY = constraints.maxHeight - pipHeight - 12;
             final clamped = Offset(
               _pipOffset.dx.clamp(12.0, maxX),
               _pipOffset.dy.clamp(12.0 + 48.0, maxY), // +48 to avoid clashing with top bar
@@ -219,10 +264,8 @@ class _InAppCameraPipScreenState extends State<InAppCameraPipScreen> {
                       final delta = details.globalPosition - _dragStartGlobal!;
                       setState(() {
                         _pipOffset = Offset(
-                          (_dragStartPipOffset!.dx + delta.dx)
-                              .clamp(12.0, maxX),
-                          (_dragStartPipOffset!.dy + delta.dy)
-                              .clamp(12.0 + 48.0, maxY),
+                          (_dragStartPipOffset!.dx + delta.dx).clamp(12.0, maxX),
+                          (_dragStartPipOffset!.dy + delta.dy).clamp(12.0 + 48.0, maxY),
                         );
                       });
                     },
@@ -233,6 +276,7 @@ class _InAppCameraPipScreenState extends State<InAppCameraPipScreen> {
                     onDoubleTap: _togglePipSize, // quick size toggle
                     child: Container(
                       width: _pipWidth,
+                      height: pipHeight,
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.06),
                         borderRadius: BorderRadius.circular(12),
@@ -242,10 +286,12 @@ class _InAppCameraPipScreenState extends State<InAppCameraPipScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Text('Host clue',
-                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                          const Text(
+                            'Host clue',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                          ),
                           const SizedBox(height: 6),
-                          _pipThumb(),
+                          Expanded(child: _pipThumb()),
                         ],
                       ),
                     ),
