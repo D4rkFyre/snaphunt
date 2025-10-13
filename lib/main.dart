@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'screens/home_screen.dart';
+import 'screens/game_info_screen.dart';
+import 'widgets/onboarding_gate.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -40,7 +42,10 @@ class SnaphuntApp extends StatelessWidget {
           brightness: Brightness.dark,
         ),
       ),
-      home: const HomeScreen(), // <- back to your normal home flow
+      home: OnboardingGate(
+        homeBuilder: (_) => const HomeScreen(),
+        gameInfoBuilder: (_) => const GameInfoScreen(),
+      ),
     );
   }
 }
