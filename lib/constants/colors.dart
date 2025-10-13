@@ -1,1 +1,0 @@
-// TODO: Define app-wide color palette and themes.

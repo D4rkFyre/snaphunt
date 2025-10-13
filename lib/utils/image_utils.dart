@@ -1,1 +1,0 @@
-// TODO: Helper functions for resizing, encoding, or compressing images.

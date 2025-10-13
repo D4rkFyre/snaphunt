@@ -1,1 +1,0 @@
-// TODO: Firebase interactions (auth, Firestore, storage).

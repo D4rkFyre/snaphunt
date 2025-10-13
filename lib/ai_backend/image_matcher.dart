@@ -1,1 +1,0 @@
-// TODO: Send images to FastAPI backend and get similarity score.
