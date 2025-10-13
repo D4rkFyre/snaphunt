@@ -1,8 +1,32 @@
+// lib/screens/home_screen.dart
 import 'find_game_screen.dart';
 import 'host_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:snaphunt/services/device_id.dart';
+import 'package:snaphunt/services/rejoin_service.dart';
+import 'package:snaphunt/widgets/game_nav_bar.dart';
+import 'package:snaphunt/services/route_transitions.dart';
 
+
+/// ---------------------------------------------------------------------------
+/// HomeScreen
+/// ---------------------------------------------------------------------------
+/// Purpose
+/// - Simple **landing hub**: choose to Host a game or Join a game.
+///
+/// What this screen does
+/// - Shows two big tappable icons:
+///   - **Host** → navigates to `HostGameScreen`
+///   - **Join** → navigates to `JoinGameScreen`
+/// - Includes a decorative bottom navigation bar (icons only).
+///
+/// Notes
+/// - `_selectedIndex` currently just updates the highlighted icon in the bottom
+///   nav; it does not swap the main content here (navigation is via the icons).
+/// - If you later want true tabs, you can render different bodies based on
+///   `_selectedIndex` instead of pushing new routes.
+/// ---------------------------------------------------------------------------
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -11,18 +35,25 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _selectedIndex = 0;
-
-  void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final id = await DeviceId.get();
+      if (!mounted) return;
+      await RejoinService.promptRejoinIfApplicable(
+        context: context,
+        deviceId: id,
+      );
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF3E2C8B), // App background color
+      // Brand background color
+      backgroundColor: const Color(0xFF3E2C8B),
+
       appBar: AppBar(
         title: const Text(
           "Snaphunt",
@@ -37,10 +68,14 @@ class _HomeScreenState extends State<HomeScreen> {
         elevation: 0,
       ),
 
+      // Center column with two large actions: Host and Join
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // -------------------------------
+            // Host
+            // -------------------------------
             const Text(
               'Host',
               style: TextStyle(
@@ -50,14 +85,11 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(height: 12),
+
+            // Big tappable icon -> HostGameScreen (slides DOWN from top)
             GestureDetector(
               onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const HostGameScreen(),
-                  ),
-                );
+                Navigator.of(context).push(slideDownFromTop(const HostGameScreen()));
               },
               child: SvgPicture.asset(
                 'assets/icons/maps.svg',
@@ -65,7 +97,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 height: 160,
               ),
             ),
+
             const SizedBox(height: 40),
+
+            // -------------------------------
+            // Join
+            // -------------------------------
             const Text(
               'Join',
               style: TextStyle(
@@ -75,14 +112,11 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(height: 12),
+
+            // Big tappable icon -> JoinGameScreen (slides UP from bottom)
             GestureDetector(
               onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const JoinGameScreen(),
-                  ),
-                );
+                Navigator.of(context).push(slideUpFromBottom(const JoinGameScreen()));
               },
               child: SvgPicture.asset(
                 'assets/icons/camera.svg',
@@ -90,41 +124,28 @@ class _HomeScreenState extends State<HomeScreen> {
                 height: 160,
               ),
             ),
+
+            const SizedBox(height: 24),
+
+            TextButton(
+              onPressed: () async {
+                final id = await DeviceId.get();
+                if (!context.mounted) return;
+                await RejoinService.promptRejoinIfApplicable(
+                  context: context,
+                  deviceId: id,
+                );
+              },
+              child: const Text(
+                'Rejoin Game',
+                style: TextStyle(color: Colors.yellowAccent, fontSize: 16),
+              ),
+            ),
           ],
         ),
       ),
 
-      bottomNavigationBar: BottomNavigationBar(
-        backgroundColor: const Color(0xFFFFC943),
-        currentIndex: _selectedIndex,
-        onTap: _onItemTapped,
-        items: [
-          BottomNavigationBarItem(
-            icon: SvgPicture.asset(
-              'assets/icons/book.svg',
-              color: const Color(0xFF3E2C8B),
-              width: 28,
-            ),
-            label: '',
-          ),
-          BottomNavigationBarItem(
-            icon: SvgPicture.asset(
-              'assets/icons/trophy-fill.svg',
-              color: const Color(0xFF3E2C8B),
-              width: 28,
-            ),
-            label: '',
-          ),
-          BottomNavigationBarItem(
-            icon: SvgPicture.asset(
-              'assets/icons/person-circle.svg',
-              color: const Color(0xFF3E2C8B),
-              width: 28,
-            ),
-            label: '',
-          ),
-        ],
-      ),
+      bottomNavigationBar: const GameNavBar(current: GameNavTab.none),
     );
   }
 }

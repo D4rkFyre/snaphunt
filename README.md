@@ -21,6 +21,9 @@ Why it’s useful:
 
 - **Host Game Creation** – Create a scavenger hunt by taking pictures of "Snap Targets".
 - **Player Participation** – Join games via a unique host code, take pictures to match the host's Snap Target pictures.
+- **Real-time Lobby** - Live player list using Firestore streams; host-only "Start Game" button to begin the hunt.
+- **Join via Code** - Player join flow with game code validation that puts players into the live lobby, awaiting the game start.
+- **Nicknames** - Host and players enter a display name shown in the lobby and beyond.
 - **Geofencing Validation** – Only allows gameplay inside the designated zone.
 - **AI Image Comparison** – Scores similarity between player pictures and host Snap Targets.
 - **Score Tracking** – Real-time point updates.
@@ -100,9 +103,37 @@ Maintained by the **SnapHunt Development Team (Full Sail University Capstone Pro
 ---
 
 ## Project Status
-**Alpha** – Core game creation and join/lobby flows in progress.
+## What’s New: Host → Join → Lobby (Functional & Tested)
 
-**Upcoming features:**
+### Code reservation + game creation (transactional)
+- Reserves `\`/codes/{CODE}\`` and creates `\`/games/{gameId}\`` atomically.
+- `\`/codes/{CODE}\`` stores:
+    - `status: "reserved"`, `gameId`, `createdAt`
+- `\`/games/{gameId}\`` stores:
+    - `joinCode`, `status: "waiting"`, `players`, `createdAt`
+
+### Nicknames
+- Host can provide `hostName` on creation (seeded into `players`).
+- Players enter a nickname when joining; stored in the lobby’s `players` list.
+
+### Join Flow
+- Validates code (A–Z + 2–9, 6 chars).
+- Looks up `\`/codes/{CODE}\`` → resolves `gameId`.
+- Verifies `\`/games/{gameId}.status == "waiting"\``.
+- Adds player nickname to `\`/games/{gameId}.players\``.
+- Navigates to lobby.
+- Clear errors: **“No game found.”**, **“Game already started.”**
+
+### Lobby
+- Live `StreamBuilder` on `\`/games/{gameId}\`` shows `players` + `status` in real time.
+- **Host-only** **Start Game** button flips `status` to `"active"`.
+
+### Testability
+- Screens/repo accept injected `FirebaseFirestore` for tests.
+- Extensive widget + repo tests using `fake_cloud_firestore`.
+- All tests green.
+
+## Upcoming Features
 - Clue photo uploads
 - Player photo submissions
 - AI image comparison scoring

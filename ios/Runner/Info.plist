@@ -45,5 +45,15 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+
+	<!-- 👇 Add this section for location permission -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>We use your location to tag clue photos with GPS so players can hunt IRL.</string>
+	<!-- (Optional) If you ever need background updates -->
+	<!--
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>We need your location even in background to support clue tracking.</string>
+	-->
+
 </dict>
 </plist>
