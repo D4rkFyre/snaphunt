@@ -23,6 +23,9 @@ import 'package:snaphunt/screens/in_app_camera_no_clue_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async' as async; // for async.Completer, Future, etc.
 
+//helper
+import 'package:snaphunt/services/app_helpers.dart';
+
 // Keep this TOP-LEVEL (not nested inside a class)
 class _ClueDraft {
   final XFile xfile;
@@ -320,7 +323,13 @@ class _HostGameScreenState extends State<HostGameScreen> {
     final area = _computeBoundingCircle();
     final radiusDisplay = area?['radiusMeters']?.toStringAsFixed(0);
 
-    return Scaffold(
+    return WillPopScope (
+        onWillPop: () async {
+          final shouldLeave=backConfirmation(context: context, screenType: ScreenType.setupScreen);
+          return shouldLeave ?? false;
+        },
+
+    child: Scaffold(
       backgroundColor: const Color(0xFF3E2C8B),
       appBar: AppBar(
         title: const Text(
@@ -588,6 +597,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
         ),
       ),
       bottomNavigationBar: const GameNavBar(current: GameNavTab.none),
+    )
     );
   }
 }

@@ -9,6 +9,7 @@ import 'package:snaphunt/services/firestore_refs.dart';
 import 'package:snaphunt/screens/score_screen.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
 import 'package:snaphunt/services/route_transitions.dart';
+import 'package:snaphunt/services/app_helpers.dart';
 
 
 class HostLiveSubmissionsScreen extends StatefulWidget {
@@ -56,7 +57,13 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
     const darkBg = Color(0xFF3E2C8B);
     const cardBg = Color(0xFF5D4BB2);
 
-    return Scaffold(
+    return WillPopScope (
+        onWillPop: () async {
+          final shouldLeave=backConfirmation(context: context, screenType: ScreenType.gameScreen);
+          return shouldLeave ?? false;
+        },
+
+    child: Scaffold(
       backgroundColor: darkBg,
       appBar: AppBar(
         backgroundColor: darkBg,
@@ -492,6 +499,7 @@ class _HostLiveSubmissionsScreenState extends State<HostLiveSubmissionsScreen> {
         current: GameNavTab.none,
         gameId: widget.gameId,
       ),
+    )
     );
   }
 }
