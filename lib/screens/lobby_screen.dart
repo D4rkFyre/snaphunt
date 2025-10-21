@@ -10,6 +10,7 @@ import 'clue_submission_screen.dart';
 import 'host_live_submissions_screen.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
 import 'package:snaphunt/services/route_transitions.dart';
+import 'package:snaphunt/services/app_helpers.dart';
 
 
 /// ---------------------------------------------------------------------------
@@ -50,7 +51,13 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
   Widget build(BuildContext context) {
     final gameDoc = FirestoreRefs.gameDoc(_db, widget.gameId);
 
-    return Scaffold(
+    return WillPopScope (
+        onWillPop: () async {
+          final shouldLeave=backConfirmation(context: context, screenType: ScreenType.setupScreen);
+          return shouldLeave ?? false;
+        },
+
+    child:  Scaffold(
       backgroundColor: const Color(0xFF3E2C8B),
       appBar: AppBar(
         title: const Text(
@@ -376,6 +383,7 @@ class _CreateGameLobbyScreenState extends State<CreateGameLobbyScreen> {
         current: GameNavTab.none,
         gameId: widget.gameId,
       ),
+    ),
     );
   }
 }
