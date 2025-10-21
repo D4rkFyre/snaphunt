@@ -17,6 +17,7 @@ import 'package:snaphunt/widgets/game_nav_bar.dart';
 import 'package:snaphunt/services/route_transitions.dart';
 import 'package:snaphunt/screens/in_app_camera_pip_screen.dart';
 import 'package:snaphunt/services/retry_tokens.dart';
+import 'package:snaphunt/services/app_helpers.dart';
 
 class ClueSubmissionScreen extends StatefulWidget {
   const ClueSubmissionScreen({
@@ -370,18 +371,10 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
     const accent = Color(0xFFFFC943);
     const accentDarker = Color(0xFFE0B23C); // slightly darker for resubmits
 
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return; // system already handled it
-
-        // snapshot navigator before the async gap to keep the analyzer happy
-        final navigator = Navigator.of(context);
-
-        final leave = await _confirmLeaveGame();
-        if (leave && context.mounted) {
-          navigator.maybePop();
-        }
+    return WillPopScope (
+      onWillPop: () async {
+        final shouldLeave=backConfirmation(context: context, screenType: ScreenType.gameScreen);
+        return shouldLeave ?? false;
       },
       child: Scaffold(
         backgroundColor: darkBg,

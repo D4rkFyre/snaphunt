@@ -15,6 +15,7 @@ import 'package:snaphunt/widgets/game_nav_bar.dart';
 // import 'package:image_picker/image_picker.dart';
 // import 'package:snaphunt/services/camera_capture.dart';
 import 'package:snaphunt/services/route_transitions.dart';
+import 'package:snaphunt/services/app_helpers.dart';
 
 // NEW: our simple in-app camera for host captures
 import 'package:snaphunt/screens/in_app_camera_no_clue_screen.dart';
@@ -320,7 +321,13 @@ class _HostGameScreenState extends State<HostGameScreen> {
     final area = _computeBoundingCircle();
     final radiusDisplay = area?['radiusMeters']?.toStringAsFixed(0);
 
-    return Scaffold(
+    return WillPopScope (
+        onWillPop: () async {
+          final shouldLeave=backConfirmation(context: context, screenType: ScreenType.setupScreen);
+          return shouldLeave ?? false;
+        },
+
+    child: Scaffold(
       backgroundColor: const Color(0xFF3E2C8B),
       appBar: AppBar(
         title: const Text(
@@ -588,6 +595,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
         ),
       ),
       bottomNavigationBar: const GameNavBar(current: GameNavTab.none),
+    ),
     );
   }
 }
