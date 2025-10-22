@@ -41,16 +41,14 @@ class _MapScreenState extends State<MapScreen> {
     setState(() => _locationAllowed = allowed);
 
     if (allowed) {
-      // Seed with current position…
       final current = await _getCurrentPosition();
       if (mounted && current != null) {
         _updateMeMarker(LatLng(current.latitude, current.longitude));
       }
-      // …and keep it updated via stream.
       _posSub = Geolocator.getPositionStream(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.best,
-          distanceFilter: 3, // meters
+          distanceFilter: 3,
         ),
       ).listen((pos) {
         if (!mounted) return;
@@ -113,94 +111,132 @@ class _MapScreenState extends State<MapScreen> {
           final double? radiusMeters =
           (gameData?['radiusMeters'] as num?)?.toDouble();
 
-          // Fallback if no game area yet
           final initialTarget = (centerLat != null && centerLng != null)
               ? LatLng(centerLat, centerLng)
-              : const LatLng(37.4220, -122.0841); // fallback
+              : const LatLng(37.4220, -122.0841);
           final initialZoom =
           (radiusMeters != null) ? _zoomForRadius(radiusMeters) : 13.0;
 
-          // Try to fit the camera to the circle when data is available/changes.
-          if (centerLat != null &&
-              centerLng != null &&
-              radiusMeters != null) {
+          if (centerLat != null && centerLng != null && radiusMeters != null) {
             _fitCameraToGameAreaIfNeeded(centerLat, centerLng, radiusMeters);
           }
 
-          final circles = <Circle>{};
-          if (centerLat != null && centerLng != null && radiusMeters != null) {
-            circles.add(
-              Circle(
-                circleId: const CircleId('game_area'),
-                center: LatLng(centerLat, centerLng),
-                radius: radiusMeters,
-                strokeWidth: 2,
-                strokeColor: Colors.purple.withValues(alpha: 0.8),
-                fillColor: Colors.purple.withValues(alpha: 0.15),
-              ),
-            );
-          }
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: FirestoreRefs.clues(db, widget.gameId).snapshots(),
+            builder: (context, cluesSnap) {
+              final circles = <Circle>{};
 
-          // Only our “me” pin, if available (no clue markers/labels).
-          final markers = <Marker>{
-            if (_meMarker != null) _meMarker!,
-          };
-
-          return Stack(
-            children: [
-              GoogleMap(
-                initialCameraPosition: CameraPosition(
-                  target: initialTarget,
-                  zoom: initialZoom,
-                ),
-                myLocationEnabled: false, // we draw our own pin
-                myLocationButtonEnabled: false,
-                zoomControlsEnabled: false,
-                markers: markers,
-                circles: circles,
-                onMapCreated: (controller) {
-                  if (!_controller.isCompleted) _controller.complete(controller);
-                },
-              ),
-              // Small top chip with radius info (low visual weight)
-              if (radiusMeters != null)
-                SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.08),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.map, size: 18),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Radius: ${radiusMeters.toStringAsFixed(0)} m',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ],
-                      ),
-                    ),
+              // Game area circle (purple)
+              if (centerLat != null && centerLng != null && radiusMeters != null) {
+                circles.add(
+                  Circle(
+                    circleId: const CircleId('game_area'),
+                    center: LatLng(centerLat, centerLng),
+                    radius: radiusMeters,
+                    strokeWidth: 2,
+                    strokeColor: Colors.purple.withValues(alpha: 0.8),
+                    fillColor: Colors.purple.withValues(alpha: 0.15),
                   ),
-                ),
-            ],
+                );
+              }
+
+              // Clue mini-circles (red, with subtle border & darker fill)
+              if (cluesSnap.hasData &&
+                  centerLat != null &&
+                  centerLng != null &&
+                  radiusMeters != null) {
+                final clueRadius = _adaptiveClueRadius(radiusMeters);
+
+                for (final doc in cluesSnap.data!.docs) {
+                  final data = doc.data();
+
+                  // Primary: location: GeoPoint (as written by GameRepository.uploadClue)
+                  final GeoPoint? gp = data['location'] as GeoPoint?;
+                  double? lat = gp?.latitude;
+                  double? lng = gp?.longitude;
+
+                  // Legacy fallback: separate lat/lng numeric fields (if ever present)
+                  lat ??= (data['lat'] as num?)?.toDouble();
+                  lng ??= (data['lng'] as num?)?.toDouble();
+
+                  if (lat == null || lng == null) continue;
+
+                  circles.add(
+                    Circle(
+                      circleId: CircleId('clue_${doc.id}'),
+                      center: LatLng(lat, lng),
+                      radius: clueRadius,
+                      // Visible but clean: thin stroke, slightly darker fill
+                      strokeWidth: 2,
+                      strokeColor: Colors.red.withValues(alpha: 0.55),
+                      fillColor: Colors.red.withValues(alpha: 0.28),
+                    ),
+                  );
+                }
+              }
+
+              final markers = <Marker>{
+                if (_meMarker != null) _meMarker!,
+              };
+
+              return Stack(
+                children: [
+                  GoogleMap(
+                    initialCameraPosition: CameraPosition(
+                      target: initialTarget,
+                      zoom: initialZoom,
+                    ),
+                    myLocationEnabled: false,
+                    myLocationButtonEnabled: false,
+                    zoomControlsEnabled: false,
+                    markers: markers,
+                    circles: circles,
+                    onMapCreated: (controller) {
+                      if (!_controller.isCompleted) {
+                        _controller.complete(controller);
+                      }
+                    },
+                  ),
+                  if (radiusMeters != null)
+                    SafeArea(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.9),
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.08),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.map, size: 18),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Radius: ${radiusMeters.toStringAsFixed(0)} m',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
           );
         },
       ),
@@ -221,14 +257,12 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  /// Fit camera to the game circle (center + radius) if it changed since last fit.
   Future<void> _fitCameraToGameAreaIfNeeded(
       double centerLat,
       double centerLng,
       double radiusMeters,
       ) async {
-    // Avoid repeated fits unless the area changed meaningfully.
-    const epsilon = 0.000001; // ~0.1m latitude-scale
+    const epsilon = 0.000001;
     final sameCenter = (_lastCenterLat != null &&
         _lastCenterLng != null &&
         (centerLat - _lastCenterLat!).abs() < epsilon &&
@@ -240,60 +274,41 @@ class _MapScreenState extends State<MapScreen> {
     if (sameCenter && sameRadius) return;
 
     final controller = await _controller.future;
-
     final bounds = _boundsFromCircle(centerLat, centerLng, radiusMeters);
-
-    // Apply a little padding so the circle edge is visible.
     const padding = 48.0;
 
     try {
-      await controller.moveCamera(
-        CameraUpdate.newLatLngBounds(bounds, padding),
-      );
+      await controller.moveCamera(CameraUpdate.newLatLngBounds(bounds, padding));
       _lastCenterLat = centerLat;
       _lastCenterLng = centerLng;
       _lastRadiusMeters = radiusMeters;
     } catch (_) {
-      // If the map hasn't fully laid out yet, retry on next frame.
-      // (Rare, but can happen on first build.)
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
         try {
           await controller.moveCamera(
-            CameraUpdate.newLatLngBounds(bounds, padding),
-          );
+              CameraUpdate.newLatLngBounds(bounds, padding));
           _lastCenterLat = centerLat;
           _lastCenterLng = centerLng;
           _lastRadiusMeters = radiusMeters;
-        } catch (_) {
-          // Swallow: if it still fails, user can use FAB; not a fatal error.
-        }
+        } catch (_) {}
       });
     }
   }
 
-  /// Convert center + radius (meters) to a LatLngBounds box.
   LatLngBounds _boundsFromCircle(
       double centerLat,
       double centerLng,
       double radiusMeters,
       ) {
-    // Earth radius (mean) in meters.
     const earthR = 6371008.8;
-
     final latRad = centerLat * math.pi / 180.0;
-
-    // Latitude delta in degrees.
     final dLat = (radiusMeters / earthR) * (180.0 / math.pi);
-
-    // Longitude delta in degrees (accounts for latitude).
-    final dLng =
-        (radiusMeters / (earthR * math.cos(latRad))) * (180.0 / math.pi);
+    final dLng = (radiusMeters / (earthR * math.cos(latRad))) * (180.0 / math.pi);
 
     final sw = LatLng(centerLat - dLat, centerLng - dLng);
     final ne = LatLng(centerLat + dLat, centerLng + dLng);
 
-    // Ensure bounds are valid (google_maps_flutter expects ne >= sw).
     final south = math.min(sw.latitude, ne.latitude);
     final north = math.max(sw.latitude, ne.latitude);
     final west = math.min(sw.longitude, ne.longitude);
@@ -305,7 +320,6 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  /// Request & check permission without blocking UI.
   Future<bool> _ensurePermission() async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) return false;
@@ -328,7 +342,6 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  /// Heuristic zoom by radius (only used for the very first frame before fit).
   double _zoomForRadius(double radiusMeters) {
     final levels = [50, 100, 200, 400, 800, 1600, 3200, 6400, 12800, 25600];
     final zooms = [18.0, 17.0, 16.0, 15.0, 14.0, 13.0, 12.0, 11.0, 10.0, 9.0];
@@ -336,5 +349,13 @@ class _MapScreenState extends State<MapScreen> {
       if (radiusMeters <= levels[i]) return zooms[i];
     }
     return 8.5;
+  }
+
+  /// Adaptive clue radius (meters) to reduce overlap in small games.
+  /// Base ≈ 3.05 m (~10 ft), scales with area radius, clamped to [1.5 m, 5.0 m].
+  double _adaptiveClueRadius(double gameAreaRadiusMeters) {
+    const baseMeters = 3.048;
+    final scaled = baseMeters * (gameAreaRadiusMeters / 300.0);
+    return scaled.clamp(1.5, 5.0);
   }
 }
