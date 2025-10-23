@@ -4,27 +4,19 @@ import 'dart:math' as math;
 
 import 'lobby_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:camera/camera.dart'; // ADDED: for XFile (camera package)
+import 'package:camera/camera.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:snaphunt/models/game_model.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:snaphunt/repositories/game_repository.dart';
 import 'package:snaphunt/services/device_id.dart';
 import 'package:snaphunt/widgets/game_nav_bar.dart';
-// REMOVED: image_picker + camera_capture (we use in-app camera now)
-// import 'package:image_picker/image_picker.dart';
-// import 'package:snaphunt/services/camera_capture.dart';
 import 'package:snaphunt/services/route_transitions.dart';
 import 'package:snaphunt/services/app_helpers.dart';
-
-// NEW: our simple in-app camera for host captures
 import 'package:snaphunt/screens/in_app_camera_no_clue_screen.dart';
-
-// One-time tutorial memory
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:async' as async; // for async.Completer, Future, etc.
+import 'dart:async' as async;
 
-// Keep this TOP-LEVEL (not nested inside a class)
 class _ClueDraft {
   final XFile xfile;
   final double? lat;
@@ -37,7 +29,7 @@ class HostGameScreen extends StatefulWidget {
     super.key,
     GameRepository? repo,
     FirebaseFirestore? db,
-    this.requireCluesToCreate = true, // NEW (test-only convenience)
+    this.requireCluesToCreate = true,
   })  : _repo = repo,
         _db = db;
 
@@ -54,38 +46,41 @@ class _HostGameScreenState extends State<HostGameScreen> {
   String? _error;
   String? _deviceId;
 
-  Future<void> _loadDeviceId() async {
-    final id = await DeviceId.get();
-    if (!mounted) return;
-    setState(() => _deviceId = id);
-  }
-
   final _nameCtrl = TextEditingController();
-  // Removed ImagePicker instance; we always use in-app camera now
   final List<_ClueDraft> _clues = [];
 
-  // Tutorial targets
   final _nickKey = GlobalKey();
   final _photoRowKey = GlobalKey();
   final _createKey = GlobalKey();
 
   late final FirebaseFirestore _db = widget._db ?? FirebaseFirestore.instance;
-
   late final GameRepository _repo =
       widget._repo ?? GameRepository(firestore: _db);
 
-  // Simple tutorial controller
   _Coach? _coach;
 
   @override
   void initState() {
     super.initState();
-    _loadDeviceId();
-    // Warm up location (optional; improves first-fix speed)
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
+    _initializeHostScreen();
+  }
+
+  Future<void> _initializeHostScreen() async {
+    await _loadDeviceId();
+
+    // Show tutorial immediately, no delay
+    await _maybeStartTutorial();
+
+    // Run location warm-up in background
+    Future.microtask(() async {
       await _tryGetPosition();
-      await _maybeStartTutorial();
     });
+  }
+
+  Future<void> _loadDeviceId() async {
+    final id = await DeviceId.get();
+    if (!mounted) return;
+    setState(() => _deviceId = id);
   }
 
   Future<void> _maybeStartTutorial() async {
@@ -94,26 +89,28 @@ class _HostGameScreenState extends State<HostGameScreen> {
     if (seen || !mounted) return;
 
     _coach ??= _Coach(context);
-    await _coach!.start([
-      _CoachStep(
-        key: _nickKey,
-        title: 'Your Nickname',
-        text: 'Type your host name. Players will see it in the lobby.',
-      ),
-      _CoachStep(
-        key: _photoRowKey,
-        title: 'Add a Clue Photo',
-        text: 'Attach one or more photos your players will hunt from.',
-      ),
-      _CoachStep(
-        key: _createKey,
-        title: 'Create Your Game',
-        text:
-        'Generate a join code and go to the lobby. Start when players join.',
-      ),
-    ]);
-
-    await prefs.setBool('host_tutorial_seen', true);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await _coach!.start([
+        _CoachStep(
+          key: _nickKey,
+          title: 'Your Nickname',
+          text: 'Type your host name. Players will see it in the lobby.',
+        ),
+        _CoachStep(
+          key: _photoRowKey,
+          title: 'Add a Clue Photo',
+          text: 'Attach one or more photos your players will hunt from.',
+        ),
+        _CoachStep(
+          key: _createKey,
+          title: 'Create Your Game',
+          text:
+          'Generate a join code and go to the lobby. Start when players join.',
+        ),
+      ]);
+      await prefs.setBool('host_tutorial_seen', true);
+    });
   }
 
   @override
@@ -123,8 +120,6 @@ class _HostGameScreenState extends State<HostGameScreen> {
     super.dispose();
   }
 
-  // Stronger location getter: prompts to enable services, longer timeout,
-  // and fallback to last known position.
   Future<Position?> _tryGetPosition() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
@@ -144,31 +139,27 @@ class _HostGameScreenState extends State<HostGameScreen> {
 
     try {
       final pos = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high, // try .medium indoors
+        desiredAccuracy: LocationAccuracy.high,
         timeLimit: const Duration(seconds: 12),
       );
       return pos;
     } catch (_) {
       try {
-        final last = await Geolocator.getLastKnownPosition();
-        return last;
+        return await Geolocator.getLastKnownPosition();
       } catch (_) {
         return null;
       }
     }
   }
 
-  // --- Bounding circle helpers (centroid + max haversine distance) ---
-
   double _deg2rad(double d) => d * math.pi / 180.0;
-
   double _haversineMeters({
     required double lat1,
     required double lng1,
     required double lat2,
     required double lng2,
   }) {
-    const R = 6371000.0; // Earth radius (m)
+    const R = 6371000.0;
     final dLat = _deg2rad(lat2 - lat1);
     final dLng = _deg2rad(lng2 - lng1);
     final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
@@ -180,8 +171,6 @@ class _HostGameScreenState extends State<HostGameScreen> {
     return R * c;
   }
 
-  /// Returns (centerLat, centerLng, radiusMeters) for all clues with GPS.
-  /// Uses simple centroid and max distance to centroid (encloses all points).
   Map<String, double>? _computeBoundingCircle() {
     final pts = _clues
         .where((c) => c.lat != null && c.lng != null)
@@ -190,7 +179,6 @@ class _HostGameScreenState extends State<HostGameScreen> {
 
     if (pts.isEmpty) return null;
 
-    // centroid
     double sumLat = 0, sumLng = 0;
     for (final p in pts) {
       sumLat += p[0];
@@ -199,7 +187,6 @@ class _HostGameScreenState extends State<HostGameScreen> {
     final centerLat = sumLat / pts.length;
     final centerLng = sumLng / pts.length;
 
-    // radius = max distance to centroid
     double maxMeters = 0;
     for (final p in pts) {
       final d = _haversineMeters(
@@ -210,14 +197,10 @@ class _HostGameScreenState extends State<HostGameScreen> {
       );
       if (d > maxMeters) maxMeters = d;
     }
-
-    // Add a small safety margin (e.g., +15m) to comfortably enclose all
-    final radiusMeters = maxMeters + 15.0;
-
     return {
       'centerLat': centerLat,
       'centerLng': centerLng,
-      'radiusMeters': radiusMeters,
+      'radiusMeters': maxMeters + 15.0,
     };
   }
 
@@ -231,10 +214,7 @@ class _HostGameScreenState extends State<HostGameScreen> {
     });
 
     try {
-      // 0) Create the game
       final Game game = await _repo.createGame(hostName: hostName);
-
-      // 0.1) Stamp host device → enforces role consistency immediately
       final deviceId = _deviceId ?? await DeviceId.get();
       await _repo.setHostDeviceId(
         gameId: game.id,
@@ -242,15 +222,8 @@ class _HostGameScreenState extends State<HostGameScreen> {
         hostNickname: hostName,
       );
 
-      // 1) Upload all clues (with lat/lng)
       for (final clue in _clues) {
         final file = File(clue.xfile.path);
-
-        // debug
-        // ignore: avoid_print
-        print(
-            '[host] uploading clue: lat=${clue.lat}, lng=${clue.lng}, path=${clue.xfile.path}');
-
         await _repo.uploadClue(
           gameId: game.id,
           file: file,
@@ -260,7 +233,6 @@ class _HostGameScreenState extends State<HostGameScreen> {
         );
       }
 
-      // 2) Compute bounding circle from clues that have GPS
       final area = _computeBoundingCircle();
       if (area != null) {
         await _repo.setGameArea(
@@ -269,23 +241,17 @@ class _HostGameScreenState extends State<HostGameScreen> {
           centerLng: area['centerLng']!,
           radiusMeters: area['radiusMeters']!,
         );
-      } else {
-        // debug
-        // ignore: avoid_print
-        print(
-            '[host] no GPS on any clue -> game area not written (normal fallback)');
       }
 
       if (!mounted) return;
 
-      // 3) Navigate to lobby (slides IN FROM RIGHT)
       Navigator.of(context).push(
         slideFromRight(
           CreateGameLobbyScreen(
             gameId: game.id,
             joinCode: game.joinCode,
             isHost: true,
-            playerId: deviceId, // pass the host's device identity
+            playerId: deviceId,
             db: _db,
           ),
         ),
@@ -298,7 +264,6 @@ class _HostGameScreenState extends State<HostGameScreen> {
   }
 
   Future<void> _captureClue() async {
-    // Open the in-app camera (no PiP needed for host)
     final XFile? x = await Navigator.of(context).push<XFile>(
       MaterialPageRoute(
         builder: (_) => const InAppCameraNoClueScreen(),
@@ -308,11 +273,9 @@ class _HostGameScreenState extends State<HostGameScreen> {
     if (x != null) {
       final pos = await _tryGetPosition();
       if (!mounted) return;
-      setState(() => _clues.add(_ClueDraft(
-        xfile: x,
-        lat: pos?.latitude,
-        lng: pos?.longitude,
-      )));
+      setState(() => _clues.add(
+        _ClueDraft(xfile: x, lat: pos?.latitude, lng: pos?.longitude),
+      ));
     }
   }
 
@@ -321,304 +284,264 @@ class _HostGameScreenState extends State<HostGameScreen> {
     final area = _computeBoundingCircle();
     final radiusDisplay = area?['radiusMeters']?.toStringAsFixed(0);
 
-    return WillPopScope (
-        onWillPop: () async {
-          final shouldLeave=backConfirmation(context: context, screenType: ScreenType.setupScreen);
-          return shouldLeave ?? false;
-        },
-
-    child: Scaffold(
-      backgroundColor: const Color(0xFF3E2C8B),
-      appBar: AppBar(
-        title: const Text(
-          "Host Game",
-          style: TextStyle(
-            color: Colors.yellowAccent,
-            fontSize: 40,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+    return WillPopScope(
+      onWillPop: () async {
+        final shouldLeave = backConfirmation(
+            context: context, screenType: ScreenType.setupScreen);
+        return shouldLeave ?? false;
+      },
+      child: Scaffold(
         backgroundColor: const Color(0xFF3E2C8B),
-        centerTitle: true,
-        elevation: 0,
-      ),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Your Nickname',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-
-              // STEP 1 target
-              _CoachTarget(
-                key: _nickKey,
-                child: TextField(
-                  controller: _nameCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  textAlign: TextAlign.center,
-                  decoration: InputDecoration(
-                    hintText: 'Enter nickname (e.g., Host)',
-                    hintStyle: const TextStyle(color: Colors.white54),
-                    filled: true,
-                    fillColor: const Color(0xFF5D4BB2),
-                    contentPadding: const EdgeInsets.symmetric(
-                        vertical: 14.0, horizontal: 20.0),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(40),
-                      borderSide: BorderSide.none,
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(40),
-                      borderSide:
-                      const BorderSide(color: Colors.white, width: 1.5),
+        appBar: AppBar(
+          title: const Text(
+            "Host Game",
+            style: TextStyle(
+              color: Colors.yellowAccent,
+              fontSize: 40,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          backgroundColor: const Color(0xFF3E2C8B),
+          centerTitle: true,
+          elevation: 0,
+        ),
+        body: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Your Nickname',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                _CoachTarget(
+                  key: _nickKey,
+                  child: TextField(
+                    controller: _nameCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    textAlign: TextAlign.center,
+                    decoration: InputDecoration(
+                      hintText: 'Enter nickname (e.g., Host)',
+                      hintStyle: const TextStyle(color: Colors.white54),
+                      filled: true,
+                      fillColor: const Color(0xFF5D4BB2),
+                      contentPadding:
+                      const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(40),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(40),
+                        borderSide:
+                        const BorderSide(color: Colors.white, width: 1.5),
+                      ),
                     ),
                   ),
                 ),
-              ),
-
-              const SizedBox(height: 16),
-              const SizedBox(height: 24),
-
-              const Text(
-                'Upload Clues (Photos)',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
+                const SizedBox(height: 24),
+                const Text(
+                  'Upload Clues (Photos)',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-                textAlign: TextAlign.center,
-              ),
-
-              const SizedBox(height: 12),
-
-              // STEP 2 target
-              _CoachTarget(
-                key: _photoRowKey,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    InkWell(
-                      onTap: _busy ? null : _captureClue,
-                      onLongPress: () async {
-                        // Optional: inline debug to inspect status fast
-                        final service = await Geolocator.isLocationServiceEnabled();
-                        final perm = await Geolocator.checkPermission();
-                        final last = await Geolocator.getLastKnownPosition().catchError((_) => null);
-                        if (!mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                          duration: const Duration(seconds: 4),
-                          content: Text(
-                            'service=$service perm=$perm last=${last == null ? 'null' : '${last.latitude},${last.longitude}'}',
+                const SizedBox(height: 12),
+                _CoachTarget(
+                  key: _photoRowKey,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      InkWell(
+                        onTap: _busy ? null : _captureClue,
+                        borderRadius: BorderRadius.circular(50),
+                        child: Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white24,
+                            border:
+                            Border.all(color: Colors.white54, width: 2),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Colors.black38,
+                                blurRadius: 6,
+                                offset: Offset(0, 3),
+                              ),
+                            ],
                           ),
-                        ));
-                      },
-                      borderRadius: BorderRadius.circular(50),
-                      child: Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white24, // translucent highlight
-                          border: Border.all(color: Colors.white54, width: 2),
-                          boxShadow: const [
-                            BoxShadow(
-                              color: Colors.black38,
-                              blurRadius: 6,
-                              offset: Offset(0, 3),
+                          child: const Icon(Icons.camera_alt,
+                              size: 30, color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (_clues.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      const Text(
+                        'Selected Clues',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold),
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        onPressed:
+                        _busy ? null : () => setState(() => _clues.clear()),
+                        child: const Text("Clear All",
+                            style: TextStyle(color: Colors.redAccent)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (int i = 0; i < _clues.length; i++)
+                        Stack(
+                          alignment: Alignment.topRight,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.file(
+                                File(_clues[i].xfile.path),
+                                width: 80,
+                                height: 80,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                            Positioned(
+                              left: 4,
+                              bottom: 4,
+                              child: Opacity(
+                                opacity: 0.9,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black87,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.place,
+                                          size: 12, color: Colors.white),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        (_clues[i].lat != null &&
+                                            _clues[i].lng != null)
+                                            ? '${_clues[i].lat!.toStringAsFixed(3)}, ${_clues[i].lng!.toStringAsFixed(3)}'
+                                            : 'no GPS',
+                                        style: const TextStyle(
+                                            fontSize: 10,
+                                            color: Colors.white),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: () =>
+                                  setState(() => _clues.removeAt(i)),
+                              child: const CircleAvatar(
+                                radius: 12,
+                                backgroundColor: Colors.black87,
+                                child: Icon(Icons.close,
+                                    size: 16, color: Colors.white),
+                              ),
                             ),
                           ],
                         ),
-                        child: const Icon(Icons.camera_alt, size: 30, color: Colors.white),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Center(
+                    child: Container(
+                      padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.black26,
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                    ),
-
-                    // (No gallery button: we want camera-only for host clues.)
-                  ],
-                ),
-              ),
-
-              if (_clues.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    const Text(
-                      'Selected Clues',
-                      style: TextStyle(
+                      child: Text(
+                        (radiusDisplay != null)
+                            ? 'Game area radius: $radiusDisplay meters'
+                            : 'Game area not set',
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 16,
-                          fontWeight: FontWeight.bold),
-                    ),
-                    const Spacer(),
-                    TextButton(
-                      onPressed:
-                      _busy ? null : () => setState(() => _clues.clear()),
-                      child: const Text("Clear All",
-                          style: TextStyle(color: Colors.redAccent)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (int i = 0; i < _clues.length; i++)
-                      Stack(
-                        alignment: Alignment.topRight,
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Image.file(
-                              File(_clues[i].xfile.path),
-                              width: 80,
-                              height: 80,
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                          // Small GPS badge
-                          Positioned(
-                            left: 4,
-                            bottom: 24,
-                            child: Opacity(
-                              opacity: 0.9,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.black87,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                              ),
-                            ),
-                          ),
-                          Positioned(
-                            left: 4,
-                            bottom: 4,
-                            child: Opacity(
-                              opacity: 0.9,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.black87,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Row(
-                                  children: [
-                                    const Icon(Icons.place,
-                                        size: 12, color: Colors.white),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      (_clues[i].lat != null &&
-                                          _clues[i].lng != null)
-                                          ? '${_clues[i].lat!.toStringAsFixed(3)}, ${_clues[i].lng!.toStringAsFixed(3)}'
-                                          : 'no GPS',
-                                      style: const TextStyle(
-                                          fontSize: 10, color: Colors.white),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                          GestureDetector(
-                            onTap: () => setState(() => _clues.removeAt(i)),
-                            child: const CircleAvatar(
-                              radius: 12,
-                              backgroundColor: Colors.black87,
-                              child: Icon(Icons.close,
-                                  size: 16, color: Colors.white),
-                            ),
-                          ),
-                        ],
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Center(
-                  child: Container(
-                    padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.black26,
-                      borderRadius: BorderRadius.circular(12),
                     ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
                     child: Text(
-                      (radiusDisplay != null)
-                          ? 'Game area radius: ${radiusDisplay} meters'
-                          : 'Game area not set',
+                      _error!,
                       style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
+                          color: Colors.redAccent, fontSize: 14),
+                      textAlign: TextAlign.center,
                     ),
+                  ),
+                if (_busy)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: CircularProgressIndicator(),
+                  ),
+                const SizedBox(height: 16),
+                _CoachTarget(
+                  key: _createKey,
+                  child: ElevatedButton(
+                    onPressed: (_busy ||
+                        (widget.requireCluesToCreate && _clues.isEmpty))
+                        ? null
+                        : _createGame,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.greenAccent,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 40, vertical: 20),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(30)),
+                      textStyle: const TextStyle(
+                          fontSize: 24, fontWeight: FontWeight.bold),
+                    ),
+                    child: const Text("Create Game"),
                   ),
                 ),
               ],
-
-              const SizedBox(height: 8),
-              const SizedBox(height: 24),
-
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    _error!,
-                    style: const TextStyle(color: Colors.redAccent),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              if (_busy)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 12),
-                  child: CircularProgressIndicator(),
-                ),
-
-              // STEP 3 target
-              _CoachTarget(
-                key: _createKey,
-                child: ElevatedButton(
-                  onPressed: (_busy ||
-                      (widget.requireCluesToCreate && _clues.isEmpty))
-                      ? null
-                      : _createGame,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.greenAccent,
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 40, vertical: 20),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30)),
-                    textStyle: const TextStyle(
-                        fontSize: 24, fontWeight: FontWeight.bold),
-                  ),
-                  child: const Text("Create Game"),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
+        bottomNavigationBar:
+        const GameNavBar(current: GameNavTab.none),
       ),
-      bottomNavigationBar: const GameNavBar(current: GameNavTab.none),
-    ),
     );
   }
 }
 
-// (The rest of your _CoachTarget, _CoachStep, _Coach, _CoachCard classes stay unchanged below)
-/// Wraps a target so it’s easy to measure its rect on screen
+/// ----------------------- Tutorial Overlay System -----------------------
+
 class _CoachTarget extends StatelessWidget {
   final Widget child;
   const _CoachTarget({super.key, required this.child});
-
   @override
   Widget build(BuildContext context) => child;
 }
@@ -633,7 +556,6 @@ class _CoachStep {
 class _Coach {
   final BuildContext root;
   OverlayEntry? _entry;
-
   _Coach(this.root);
 
   Future<void> start(List<_CoachStep> steps) async {
@@ -645,13 +567,10 @@ class _Coach {
   Future<void> _showStep(_CoachStep step, int index, int total) async {
     final ctx = step.key.currentContext;
     if (ctx == null) return;
-
     final rb = ctx.findRenderObject() as RenderBox?;
     if (rb == null || !rb.attached) return;
-
     final size = rb.size;
     final offset = rb.localToGlobal(Offset.zero);
-
     final completer = async.Completer<void>();
 
     _entry = OverlayEntry(
@@ -750,20 +669,22 @@ class _CoachCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 18,
-                      color: Colors.yellowAccent,
-                    )),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                    color: Colors.yellowAccent,
+                  ),
+                ),
                 const SizedBox(height: 6),
                 Text(text, style: const TextStyle(fontSize: 14)),
                 const SizedBox(height: 12),
                 Row(
                   children: [
                     Text('$index / $total',
-                        style:
-                        const TextStyle(color: Colors.white70, fontSize: 12)),
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 12)),
                     const Spacer(),
                     TextButton(
                       style: TextButton.styleFrom(
@@ -775,10 +696,12 @@ class _CoachCard extends StatelessWidget {
                             borderRadius: BorderRadius.circular(10)),
                       ),
                       onPressed: onNext,
-                      child: Text(index == total ? 'Done' : 'Next',
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 14)),
-                    )
+                      child: Text(
+                        index == total ? 'Done' : 'Next',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                    ),
                   ],
                 ),
               ],
