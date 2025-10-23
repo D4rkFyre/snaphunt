@@ -405,27 +405,40 @@ class _HostGameScreenState extends State<HostGameScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    IconButton(
-                      icon: const Icon(Icons.camera_alt,
-                          size: 28, color: Colors.white),
-                      onPressed: _busy ? null : _captureClue,
+                    InkWell(
+                      onTap: _busy ? null : _captureClue,
                       onLongPress: () async {
                         // Optional: inline debug to inspect status fast
-                        final service =
-                        await Geolocator.isLocationServiceEnabled();
+                        final service = await Geolocator.isLocationServiceEnabled();
                         final perm = await Geolocator.checkPermission();
-                        final last =
-                        await Geolocator.getLastKnownPosition().catchError(
-                              (_) => null,
-                        );
+                        final last = await Geolocator.getLastKnownPosition().catchError((_) => null);
                         if (!mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                           duration: const Duration(seconds: 4),
                           content: Text(
-                              'service=$service perm=$perm last=${last == null ? 'null' : '${last.latitude},${last.longitude}'}'),
+                            'service=$service perm=$perm last=${last == null ? 'null' : '${last.latitude},${last.longitude}'}',
+                          ),
                         ));
                       },
+                      borderRadius: BorderRadius.circular(50),
+                      child: Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white24, // translucent highlight
+                          border: Border.all(color: Colors.white54, width: 2),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Colors.black38,
+                              blurRadius: 6,
+                              offset: Offset(0, 3),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(Icons.camera_alt, size: 30, color: Colors.white),
+                      ),
                     ),
+
                     // (No gallery button: we want camera-only for host clues.)
                   ],
                 ),
