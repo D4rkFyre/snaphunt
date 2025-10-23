@@ -127,7 +127,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 24),
 
-            TextButton(
+            ElevatedButton(
               onPressed: () async {
                 final id = await DeviceId.get();
                 if (!context.mounted) return;
@@ -136,11 +136,21 @@ class _HomeScreenState extends State<HomeScreen> {
                   deviceId: id,
                 );
               },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.yellowAccent,
+                foregroundColor: Colors.black,
+                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(30),
+                ),
+                elevation: 4,
+              ),
               child: const Text(
                 'Rejoin Game',
-                style: TextStyle(color: Colors.yellowAccent, fontSize: 16),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
             ),
+
           ],
         ),
       ),
