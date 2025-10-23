@@ -453,6 +453,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
 
                     // attempts & button state
                     final attempts = _attempts[clueId] ?? 0;       // 0 until first upload
+                    final urlBust = myThumb != null ? '${myThumb}${myThumb.contains('?') ? '&' : '?'}v=$attempts' : null;
                     final hasSubmitted = attempts > 0;
                     final remainingRetries = hasSubmitted
                         ? (_kMaxAttemptsPerClue - attempts)
@@ -511,7 +512,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
                                   Expanded(
                                     child: Center(
                                       child: GestureDetector(
-                                        onTap: () => _openFullScreenNetwork(myThumb, heroThumb, title: 'Your Photo'),
+                                        onTap: () => _openFullScreenNetwork(urlBust!, heroThumb, title: 'Your Photo'),
                                         child: Hero(
                                           tag: heroThumb,
                                           child: ClipRRect(
@@ -519,7 +520,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
                                             child: SizedBox(
                                               height: 120,
                                               width: 120,
-                                              child: Image.network(myThumb, fit: BoxFit.cover),
+                                              child: Image.network(urlBust!, fit: BoxFit.cover),
                                             ),
                                           ),
                                         ),
@@ -555,7 +556,7 @@ class _ClueSubmissionScreenState extends State<ClueSubmissionScreen> {
                               Align(
                                 alignment: Alignment.center,
                                 child: TextButton.icon(
-                                  onPressed: () => _openCompare(hostUrl, myThumb, heroPrompt, heroThumb),
+                                  onPressed: () => _openCompare(hostUrl, urlBust!, heroPrompt, heroThumb),
                                   icon: const Icon(Icons.compare),
                                   label: const Text('Compare Images'),
                                   style: TextButton.styleFrom(
