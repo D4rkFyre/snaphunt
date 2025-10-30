@@ -13,11 +13,14 @@ class InAppCameraPipScreen extends StatefulWidget {
   final String hostClueImageUrl;
   final bool clueAbove; // legacy header mode
 
+
   const InAppCameraPipScreen({
     super.key,
     required this.hostClueImageUrl,
     this.clueAbove = false,
   });
+
+
 
   @override
   State<InAppCameraPipScreen> createState() => _InAppCameraPipScreenState();
@@ -27,6 +30,7 @@ class _InAppCameraPipScreenState extends State<InAppCameraPipScreen> {
   CameraController? _controller;
   List<CameraDescription>? _cameras;
   bool _busy = true;
+  FlashMode _flashMode = FlashMode.off;
 
   // PiP core state
   PipMode _mode = PipMode.minimized;        // start minimized per request
@@ -127,6 +131,21 @@ class _InAppCameraPipScreenState extends State<InAppCameraPipScreen> {
   void dispose() {
     _controller?.dispose();
     super.dispose();
+  }
+
+  Future<void> _toggleFlash() async {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+
+    final newMode = _flashMode == FlashMode.off ? FlashMode.torch : FlashMode.off;
+
+    try {
+      await _controller!.setFlashMode(newMode);
+      if (mounted) setState(() => _flashMode = newMode);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to toggle flash: $e')),
+      );
+    }
   }
 
   Future<void> _takePhoto() async {
@@ -603,6 +622,15 @@ class _InAppCameraPipScreenState extends State<InAppCameraPipScreen> {
           ),
           const Spacer(),
           // no flip button
+          IconButton(
+            icon: Icon(
+              _flashMode == FlashMode.off
+                  ? Icons.flash_off
+                  : Icons.flash_on,
+              color: Colors.white,
+            ),
+            onPressed: _toggleFlash,
+          ),
         ],
       ),
     );
