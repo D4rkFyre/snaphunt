@@ -17,6 +17,7 @@ class _InAppCameraNoClueScreenState extends State<InAppCameraNoClueScreen> {
   List<CameraDescription>? _cameras;
   bool _busy = true;
   bool _permissionGranted = false;
+  FlashMode _flashMode = FlashMode.off;
 
   @override
   void initState() {
@@ -74,6 +75,21 @@ class _InAppCameraNoClueScreenState extends State<InAppCameraNoClueScreen> {
     super.dispose();
   }
 
+  Future<void> _toggleFlash() async {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+
+    final newMode = _flashMode == FlashMode.off ? FlashMode.torch : FlashMode.off;
+
+    try {
+      await _controller!.setFlashMode(newMode);
+      if (mounted) setState(() => _flashMode = newMode);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to toggle flash: $e')),
+      );
+    }
+  }
+
   Future<void> _takePhoto() async {
     if (!mounted || _controller == null || !_controller!.value.isInitialized) return;
     try {
@@ -118,6 +134,15 @@ class _InAppCameraNoClueScreenState extends State<InAppCameraNoClueScreen> {
                     onPressed: () => Navigator.pop(context, null),
                   ),
                   const Spacer(),
+                  IconButton(
+                    icon: Icon(
+                      _flashMode == FlashMode.off
+                          ? Icons.flash_off
+                          : Icons.flash_on,
+                      color: Colors.white,
+                    ),
+                    onPressed: _toggleFlash,
+                  ),
                 ],
               ),
             ),
